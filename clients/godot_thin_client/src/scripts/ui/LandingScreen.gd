@@ -24,6 +24,8 @@ extends Control
 var _command_client: CommandClient = null
 var _save_slots: SaveSlots = null
 var _faction_capacity: FactionCapacity = null
+## Polls whether a world is already running under this menu and attaches to it (`WorldStatusPoll`).
+var _world_status: WorldStatusPoll = null
 
 
 func _ready() -> void:
@@ -77,6 +79,10 @@ func _setup_query_seams() -> void:
 	# Injection is what puts the first ask in flight — the setup pane is already up by now, and its
 	# rival control has nothing to offer until this answers.
 	_shell.set_faction_capacity(_faction_capacity)
+	_world_status = WorldStatusPoll.new()
+	_world_status.attach_any = GameLaunch.attach_world_env_set()
+	_world_status.set_sender(_send_query)
+	_world_status.attach_requested.connect(_on_attach_requested)
 
 
 ## The one hop from the native query worker onto the main thread — the same once-a-frame drain
@@ -86,14 +92,18 @@ func _setup_query_seams() -> void:
 ## drains would race and each swallow the other's answers. The seams tell their own replies apart by
 ## `request_id` and their id blocks are disjoint by construction (`QueryRequestIds`), so handing each
 ## the whole batch is correct — the same arrangement `Main._pump_forecast_queries` uses.
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _command_client == null:
 		return
+	if _world_status != null:
+		_world_status.tick(delta)
 	var replies: Array = _command_client.poll_query_replies()
 	if _save_slots != null:
 		_save_slots.deliver(replies)
 	if _faction_capacity != null:
 		_faction_capacity.deliver(replies)
+	if _world_status != null:
+		_world_status.deliver(replies)
 
 
 func _send_query(request_id: int, ask: Dictionary) -> bool:
@@ -128,6 +138,17 @@ func _on_new_game_requested(preset_id: String, width: int, height: int, seed: St
 func _on_load_requested(slot: String) -> void:
 	GameLaunch.pending_load_slot = slot
 	GameLaunch.pending_new_game = null
+	get_tree().change_scene_to_file("res://src/Main.tscn")
+
+
+## **A WORLD IS ALREADY RUNNING, AND THE MENU TAKES IT.** The epoch goes into `GameLaunch` and the scene
+## swaps exactly as New Game and Load do, but `Main` sends no world request for it — it asks for a full
+## frame of the running world instead and reveals it (`.claude/rules/core_sim/world-handoff.md`).
+func _on_attach_requested(epoch: int) -> void:
+	GameLaunch.attach_env_spent = true
+	GameLaunch.pending_attach_epoch = epoch
+	GameLaunch.pending_new_game = null
+	GameLaunch.pending_load_slot = ""
 	get_tree().change_scene_to_file("res://src/Main.tscn")
 
 

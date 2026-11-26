@@ -1,6 +1,7 @@
 ---
 paths:
   - "core_sim/src/{fauna,fauna_config,intensification}.rs"
+  - "core_sim/src/scenario/pens.rs"
   - "core_sim/src/data/intensification_ladder.json"
   - "core_sim/tests/{fauna_husbandry,grazing_2d_pen,pen_standing_yield,rollback_tended_survival}.rs"
 ---
@@ -2073,3 +2074,27 @@ and rationale in `intensification.md` -> "Size tiers and knowledge gains"). Its 
 animal: the herd's keeper load is divided by `keeper_ratio_gain` in every WORK-term site, while the hurdles
 (material) term keeps the raw load. Keeping a Ranch earns Selective breeding, which multiplies the managed
 regrowth rate of every penned herd of the knowing people (`Herd::breeding_gain`).
+
+
+## Scenario section
+
+The **pens** section of a scenario file (`core_sim/src/scenario/pens.rs`; the loader is
+`scenarios.md`). `factions[].pens` is required (`[]` for none). Each entry is one replayed command,
+externally tagged and `deny_unknown_fields`, with `faction_id` implied by the section. **A herd is
+named by its scenario id** (the `herds` section's `id`, as in `held.herd` and `build_rung.herd_id`),
+because a pen's tile is chosen at runtime: `extend_pen` carries no `target_x` / `target_y`, the pen
+it widens is wherever the named herd's `corralled_at` is. Entries replay **after the builds**, in
+faction order then file order, through `command_seam::apply_extend_pen` and
+`apply_set_herd_output`, the bodies the server's handlers call. **A refused entry stops the load** at
+`factions[i].pens[k]` with the verb's own text; a herd with no pen is refused `<herd> has no pen to
+extend.`
+
+| entry | keys | pass-1 refusals |
+|---|---|---|
+| `extend_pen` | required `herd` (scenario id) | a herd id the file's `herds` section does not declare (`pens[k].extend_pen.herd`) |
+| `set_herd_output` | required `herd` (scenario id), `fraction` | an undeclared herd id (`pens[k].set_herd_output.herd`); a fraction not finite or outside `[NO_STANDING_COMMITMENT, WHOLE_HERD_COMMITTED]`, `[0, 1]` (`pens[k].set_herd_output.fraction`) |
+
+Both verbs need a band keeping the herd (a hunt row on it, any policy). A band's chief may already
+hold that row from the first turn, so a herd beside the band needs no `assign_labor` entry.
+
+The loader, the apply order and the refusal contract are `scenarios.md`.

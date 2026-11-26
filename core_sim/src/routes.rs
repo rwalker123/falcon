@@ -1112,6 +1112,24 @@ pub fn remoteness_multiplier(distance: u32, ladder: &LadderConfig) -> f32 {
     }
 }
 
+/// **THE REMOTENESS A KEEPER IS QUOTED FOR A ROAD**: the hex distance from the tile the band stands
+/// on to the road tile, through [`remoteness_multiplier`], returned as `(distance, remoteness)`. The one body `grade` / `pave` (`command_seam`)
+/// and the scenario loader's held roads both ask, so the quote cannot drift between them.
+pub fn quote_road_remoteness(
+    world: &World,
+    band_tile: UVec2,
+    road_tile: UVec2,
+    ladder: &LadderConfig,
+) -> (u32, f32) {
+    let width = world.resource::<crate::resources::TileRegistry>().width;
+    let wrap = world
+        .resource::<crate::resources::SimulationConfig>()
+        .map_topology
+        .wrap_horizontal;
+    let distance = crate::grid_utils::hex_distance_wrapped(band_tile, road_tile, width, wrap);
+    (distance, remoteness_multiplier(distance, ladder))
+}
+
 /// **WHAT THIS ROAD OWES EVERY TURN TO STAY WHERE IT IS**, in work units — the rung's own
 /// `upkeep_demand`, *interpolated* on its standing and scaled by its [`road_upkeep_measure`].
 ///

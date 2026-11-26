@@ -4978,11 +4978,11 @@ fn a_far_hay_row_lands_its_fodder_and_fibre_only_when_a_pack_lands() {
             .clone()
             .expect("the far row posts a party");
         walk = party.walk_turns;
-        let carried = party.load_goods.fodder
+        let carried = party.load_fodder()
             + party
                 .on_the_road
                 .iter()
-                .map(|walker| walker.goods.fodder)
+                .map(|walker| walker.lots.iter().map(|lot| lot.goods.fodder).sum::<f32>())
                 .sum::<f32>();
         if first_cut.is_none() && carried > 0.0 {
             first_cut = Some(turn);
@@ -5163,4 +5163,185 @@ fn a_builder_freed_by_a_finished_build_is_dealt_before_the_frame_is_cut() {
         (1, row_before),
         "control: the row is at its Max, so the freed hand stays idle"
     );
+}
+
+/// ⛔ **THE TURN'S `netRateHome` AND THE QUERY'S `rate_home` ARE ONE NUMBER ON A FAR FORAGE ROW**
+/// once the pack is the basket's hold and food ages at the source: the turn, the assign-time seed and
+/// the compose-sheet query all step `forecast_forage_caravan` through the one caravan rule. Asked
+/// after the caravan has put somebody on the road, so the load, the ages and the road are all live.
+fn a_far_forage_rows_published_rate_home_is_the_rate_the_query_quotes(baskets: u32) {
+    use sim_runtime::{QueryPayload, QueryReply, WorkPartyForecastQuery, WorkPartySource};
+    /// The asking band's durable id.
+    const ASKING_BAND: u64 = 77_003;
+    /// The crew on the row.
+    const CREW: u32 = 4;
+    /// Hexes between the band and the patch along one row — past the apron, so a party is posted.
+    const FAR: u32 = 6;
+    /// A bound on the run, not a prediction.
+    const TURNS: u32 = 60;
+
+    let mut app = spawn_world();
+    let (coord, camp) = {
+        let labor = app.world.resource::<LaborConfigHandle>().get();
+        let flora = app.world.resource::<core_sim::FloraConfigHandle>().get();
+        let map_seed = app.world.resource::<SimulationConfig>().map_seed;
+        let mut tiles: Vec<Tile> = app
+            .world
+            .query::<&Tile>()
+            .iter(&app.world)
+            .cloned()
+            .collect();
+        tiles.sort_by_key(|tile| (tile.position.y, tile.position.x));
+        let registry = app.world.resource::<ForageRegistry>();
+        let index = app.world.resource::<TileRegistry>();
+        // **The richest candidate**, so the stand stays well above its floor while the caravan runs:
+        // on a stand at its floor the crew's useful hands fall to one, the compose query claims the
+        // kit for those hands alone, and the staffing (which spends spare kit on the rest) grants
+        // more, so the two price different coverage of the same crew.
+        let mut candidates: Vec<&Tile> = tiles
+            .iter()
+            .filter(|tile| registry.patch(tile.position).is_some())
+            .collect();
+        candidates.sort_by(|a, b| {
+            let capacity = |tile: &Tile| {
+                registry
+                    .patch(tile.position)
+                    .map_or(0.0, |p| p.carrying_capacity)
+            };
+            capacity(b).total_cmp(&capacity(a))
+        });
+        candidates
+            .into_iter()
+            .find_map(|tile| {
+                let camp = index.index(tile.position.x + FAR, tile.position.y)?;
+                let composition = tile_flora_composition(&flora, &labor.forage, tile, map_seed);
+                let all_food = composition
+                    .iter()
+                    .filter(|share| share.share > 0.0)
+                    .all(|share| {
+                        flora
+                            .species
+                            .get(&share.species)
+                            .is_some_and(|def| def.yield_.provisions_per_biomass > 0.0)
+                    });
+                (all_food && !composition.is_empty()).then_some((tile.position, camp))
+            })
+            .expect("the harness map grows a food basket somewhere with room to camp far off")
+    };
+    {
+        let mut registry = app.world.resource_mut::<ForageRegistry>();
+        let patch = registry.patch_mut(coord).expect("the chosen patch");
+        patch.biomass = patch.carrying_capacity * STOCKED_STANDING_CROP;
+    }
+    declare_gathering_site(&mut app, coord);
+    let band = spawn_forager_of(&mut app, camp, coord, None, CREW);
+    app.world
+        .entity_mut(band)
+        .insert(core_sim::BandId(ASKING_BAND));
+    // The band's gear is stated (`baskets` of them, or a bare-handed crew), so the turn and the
+    // query read one ledger rather than the stocked fallback a band with no ledger gets.
+    {
+        let equipment = app
+            .world
+            .resource::<core_sim::EquipmentConfigHandle>()
+            .get();
+        let mut gear = core_sim::BandEquipment::default();
+        if baskets > 0 {
+            gear.stock(
+                "baskets",
+                baskets,
+                &equipment.items["baskets"].default_tier().id,
+                None,
+            );
+        }
+        app.world.entity_mut(band).insert(gear);
+    }
+    let mut on_the_road = false;
+    for _ in 0..TURNS {
+        run_turns_with_forage(&mut app, 1);
+        let allocation = app.world.get::<LaborAllocation>(band).expect("the band");
+        let party = allocation.assignments[0].party.as_ref().expect("a party");
+        if party.hunters_on_the_road() > 0 && party.net_rate_home > 0.0 {
+            on_the_road = true;
+            break;
+        }
+    }
+    assert!(
+        on_the_road,
+        "liveness: the caravan puts somebody on the road"
+    );
+    let (published, floor, take_species) = {
+        let allocation = app.world.get::<LaborAllocation>(band).expect("the band");
+        let (floor, take_species) = match &allocation.assignments[0].target {
+            LaborTarget::Forage {
+                floor,
+                take_species,
+                ..
+            } => (
+                *floor,
+                take_species
+                    .keys()
+                    .map(str::to_string)
+                    .collect::<Vec<String>>(),
+            ),
+            other => panic!("a forage row, got {other:?}"),
+        };
+        (
+            allocation.assignments[0]
+                .party
+                .as_ref()
+                .expect("a party")
+                .net_rate_home,
+            floor,
+            take_species,
+        )
+    };
+    let kit_id = app
+        .world
+        .resource::<core_sim::EquipmentConfigHandle>()
+        .get()
+        .default_kit(core_sim::KitJob::Forage)
+        .id()
+        .to_string();
+    let reply = core_sim::forecast_query::answer_forecast_query(
+        &mut app.world,
+        &QueryPayload::WorkPartyForecast(WorkPartyForecastQuery {
+            faction_id: 0,
+            band_id: ASKING_BAND,
+            source: WorkPartySource::Forage {
+                x: coord.x,
+                y: coord.y,
+                take_species,
+            },
+            kit_id,
+            workers: CREW,
+            floor,
+        }),
+    );
+    let answer = match reply {
+        QueryReply::WorkPartyForecast(answer) => answer,
+        other => panic!("the work-party query must answer with a forecast, got {other:?}"),
+    };
+    assert!(answer.posts_a_party, "a patch past the apron posts a party");
+    assert!(
+        answer.rate_home > 0.0,
+        "liveness: the basket brings food home ({answer:?})"
+    );
+    assert_eq!(
+        answer.rate_home, published,
+        "the sheet and the row it becomes must quote one number"
+    );
+}
+
+/// The far forage row quotes what it publishes with a bare-handed crew.
+#[test]
+fn a_bare_far_forage_row_quotes_what_it_publishes() {
+    a_far_forage_rows_published_rate_home_is_the_rate_the_query_quotes(0);
+}
+
+/// ... and with a basket in every hand: the turn's row and the compose quote price the same
+/// equipped hold and picking rate.
+#[test]
+fn a_kitted_far_forage_row_quotes_what_it_publishes() {
+    a_far_forage_rows_published_rate_home_is_the_rate_the_query_quotes(4);
 }

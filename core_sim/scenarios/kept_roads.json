@@ -1,0 +1,50 @@
+{
+  "name": "kept_roads",
+  "note": "One band that knows roadbuilding and paving, with a short run of roads beside its camp: trails, dirt roads and a paved road it keeps.",
+  "world": {
+    "preset": "earthlike",
+    "width": 80,
+    "height": 52,
+    "seed": 41733,
+    "profile": "late_forager_tribe",
+    "archetypes": { "major": 0, "minor": 0 }
+  },
+  "factions": [
+    {
+      "faction": 0,
+      "knowledge": ["roadbuilding", "paving"],
+      "rungs": [],
+      "labor": [
+        { "assign_labor": {
+          "band": "home", "role": "roadwork", "workers": 0,
+          "take_species": [], "move_with_herd": false } }
+      ],
+      "pens": [],
+      "bench": [],
+      "bands": [
+        {
+          "id": "home",
+          "at": [13, 11],
+          "size": 150,
+          "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 },
+          "founding_lines": 8,
+          "larder": [{ "class": "dry", "amount": 450.0 }],
+          "outfit": {
+            "kits": { "big_game": 11, "gathering": 24, "sledding": 7, "roadbuilding": 5, "paving": 5 },
+            "materials": { "fibre": 20, "hide": 12, "stone": 20 }
+          }
+        }
+      ],
+      "roads": [
+        { "at": [14, 11], "rung": "trail" },
+        { "at": [15, 11], "rung": "trail" },
+        { "at": [13, 12], "rung": "dirt_road", "keeper": "home" },
+        { "at": [14, 12], "rung": "dirt_road", "keeper": "home" },
+        { "at": [13, 10], "rung": "paved_road", "keeper": "home" }
+      ]
+    }
+  ],
+  "tiles": [],
+  "herds": [],
+  "deposits": []
+}

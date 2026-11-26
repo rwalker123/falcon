@@ -4022,9 +4022,16 @@ fn managed_dig_allocation(
             let at = herd.position();
             !fog_enabled || visibility.is_some_and(|ledger| ledger.is_visible(faction, at.x, at.y))
         };
+        let demographics = world
+            .get_resource::<crate::demographics_config::DemographicsConfigHandle>()
+            .map_or_else(
+                crate::demographics_config::DemographicsConfig::builtin,
+                crate::demographics_config::DemographicsConfigHandle::get,
+            );
         crate::food_orders::manage_food_orders(
             &mut allocation,
             &crate::food_orders::FoodInputs {
+                keeping: &demographics.keeping,
                 site: &inputs,
                 tile_known: &known_tile,
                 herd_known: &known_herd,

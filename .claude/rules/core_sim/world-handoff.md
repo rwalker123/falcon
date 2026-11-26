@@ -3,6 +3,8 @@ paths:
   - "core_sim/src/network.rs"
   - "clients/godot_thin_client/src/scripts/Main.gd"
   - "clients/godot_thin_client/src/scripts/GameLaunch.gd"
+  - "clients/godot_thin_client/src/scripts/WorldStatusPoll.gd"
+  - "clients/godot_thin_client/src/scripts/ui/LandingScreen.gd"
   - "clients/godot_thin_client/src/scripts/Hud.gd"
   - "clients/godot_thin_client/src/scripts/MapView.gd"
   - "clients/godot_thin_client/src/scripts/ui/hud/FactionReadouts.gd"
@@ -94,6 +96,39 @@ the one already being built (a `seed 0` re-roll) plus a second worldgen — on e
 a slow machine. Firing late only means a rare dropped frame self-heals slowly. So it is set at ~7x
 the measured worst case: `new_game.begin`→`new_game.completed` for the largest offered map (Huge,
 128x80) is **4.4s in a debug build**, which is what the client runs. A snug fit here is a bug.
+
+## A world the client did not ask for
+
+A scenario (`scenarios.md`) builds a world from a terminal or from `run_stack.sh --scenario`, so a
+client can arrive at a world that **no request of its own** produced. Three pieces cover it:
+
+- **The menu learns of it by asking.** The landing screen opens no stream, so it polls the
+  faction-free `WorldStatus` query (`WorldStatusQuery` / `WorldStatusReply { world_active,
+  world_epoch }`, answered before the `world_active` gate) through `WorldStatusPoll`, once every
+  `POLL_INTERVAL_SECONDS`.
+- **The attach rule is in one place** (`WorldStatusPoll`). With `FALCON_ATTACH_WORLD=1`, which
+  `run_stack.sh --scenario` sets after the load has already succeeded, the client attaches to the
+  first active world it sees. Without the flag, the first reply's epoch is the baseline, and only a
+  **higher** epoch that turns up while the menu is open attaches. A client started against a world
+  that is already running still shows the menu. The flag is spent after one attach
+  (`GameLaunch.attach_env_spent`), so an Abandon does not attach straight back.
+- **An attaching `Main` sends no world request.** `GameLaunch.pending_attach_epoch` takes precedence
+  over both other handoff slots. `Main` sends no `new_game` or `load_game` and runs no
+  `NEW_GAME_ANSWER_TIMEOUT` retry, sets the reveal baseline to the attach epoch minus one, and asks
+  for its frame with `resync`.
+
+**That `resync` is what delivers the frame, so the server has to answer it.** The world was
+published before this seat was claimed, so the seat has no ring entry yet. A `Resync` from a seated
+connection on an active world therefore publishes that seat's first frame, which is always a full
+baseline (`factions.md` → "A SEAT'S FIRST PUBLICATION IS ITS BASELINE"). It answers
+`resync.no_world` only when the server is idle. Without this, the reveal waited on whatever command
+next forced a recapture.
+
+## Key scripts
+
+| Script | Purpose |
+|--------|---------|
+| `WorldStatusPoll.gd` (`class_name WorldStatusPoll`) | The landing screen's `world_status` poll and the attach rule above. Owns no socket: the sender is injected and replies come from the screen's single drain. One ask in flight at a time, and its ids wrap inside its `QueryRequestIds` block, because the poll never ends. Emits `attach_requested(epoch)` once |
 
 ## The client-side half: empty is not "unchanged" across a world boundary
 

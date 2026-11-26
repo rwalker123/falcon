@@ -16,9 +16,12 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    belief::BeliefRegistry,
     components::{BandId, LaborAllocation, LeadershipReading, PopulationCohort, ResidentBand},
     culture::{CultureManager, CultureOwner, CultureTraitAxis},
+    demographics_config::DemographicsConfigHandle,
     food_orders::{OrderReadings, OrderVerdict},
+    intensification::LadderConfigHandle,
     intensification::RungDef,
     leader_names::LeaderNameCatalogHandle,
     leadership_config::{LeadershipConfig, LeadershipConfigHandle},
@@ -27,7 +30,9 @@ use crate::{
         CommandEventEntry, CommandEventKind, CommandEventLog, SimulationConfig, SimulationTick,
     },
     scalar::{scalar_from_f32, Scalar},
-    settlement::SettlementStages,
+    settlement,
+    settlement_stage_config::SettlementStageConfigHandle,
+    tile_improvement::TileImprovementRegistry,
     wellbeing_config::{LeadershipMoraleConfig, WellbeingConfigHandle},
 };
 
@@ -372,7 +377,10 @@ type LeadershipBandItems = (
 /// Two sources are read here off the band's state: the hexes it walked following a herd
 /// (`HerdFollowSteps`, which `advance_band_movement` filled earlier this turn and `mobility_tick`
 /// drains later -- this system is ordered between the two, so it reads the same measure the mobility
-/// score does without recomputing it) and the settlement stage its current size stands in.
+/// score does without recomputing it) and the settlement stage the band stands in this turn (its own
+/// people, store rung, larder and owned-store food, and anchor belief, read by the same
+/// `settlement::read_bands` / `band_stage` that `advance_settlements` uses, so a fresh world's first
+/// turn already counts it).
 ///
 /// A band with no culture layer yet banks but waits to emerge: the kind is fixed forever, so it is
 /// not read off a default. Bands are visited in id order so the feed order is deterministic.
@@ -382,7 +390,11 @@ pub fn advance_leadership(
     config: Res<LeadershipConfigHandle>,
     names: Res<LeaderNameCatalogHandle>,
     sim_config: Res<SimulationConfig>,
-    settlements: Res<SettlementStages>,
+    stage_config: Res<SettlementStageConfigHandle>,
+    ladder: Res<LadderConfigHandle>,
+    demographics: Res<DemographicsConfigHandle>,
+    belief: Res<BeliefRegistry>,
+    improvements: Option<Res<TileImprovementRegistry>>,
     mut culture: ResMut<CultureManager>,
     wellbeing: Res<WellbeingConfigHandle>,
     follow_steps: Option<Res<HerdFollowSteps>>,
@@ -391,6 +403,17 @@ pub fn advance_leadership(
     mut proposals: ResMut<crate::chief_proposals::ChiefProposalBook>,
 ) {
     let config = config.get();
+    // Every band's OWN stage as of this turn -- the same reading `advance_settlements` makes, via
+    // the one shared `settlement::read_bands` / `band_stage`.
+    let stage_config = stage_config.get();
+    let ladder = ladder.get();
+    let demographics = demographics.get();
+    let readings = settlement::read_bands(
+        bands.iter().map(|(band, cohort, ..)| (band, cohort)),
+        improvements.as_deref(),
+        &ladder,
+        &demographics.keeping,
+    );
     let mut open: Vec<_> = bands
         .iter_mut()
         .filter(|(_, _, leadership, _, _)| leadership.leader.is_none())
@@ -400,10 +423,11 @@ pub fn advance_leadership(
         if let Some(steps) = follow_steps.as_deref() {
             leadership.credit_herd_hexes(&config, steps.hexes_of(**band));
         }
-        // The band's OWN stage (read over itself, never the tribe's: a band in a tribe has the
-        // tribe's leader), as `advance_settlements` resolved it last turn.
-        if let Some(index) = settlements.of_band(**band) {
-            leadership.credit_stages(&config, index as u32);
+        // The band's OWN stage as of this turn (read over itself, never the tribe's: a band in a
+        // tribe has the tribe's leader).
+        if let Some(reading) = readings.get(*band) {
+            let index = settlement::band_stage(reading, &belief, &ladder, &stage_config);
+            leadership.credit_stages(&config, index);
         }
         if !leadership.ready(&config) {
             continue;

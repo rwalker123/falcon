@@ -32,6 +32,8 @@ pub const BUILTIN_LABOR_CONFIG: &str = include_str!("data/labor_config.json");
 /// longer a scalar default: it is [`ForageLaborConfig::capacity_by_biome`], a per-biome table (the
 /// human-edible twin of `fauna_config`'s `graze.capacity_by_biome`).
 const DEFAULT_FORAGE_PER_WORKER_BIOMASS_CAPACITY: f32 = 1.6;
+/// The shipped bare-handed gather hold, matching the bare haul (`labor_config.json`).
+const DEFAULT_FORAGE_HOLD_PER_WORKER_BIOMASS_CAPACITY: f32 = 12.0;
 const DEFAULT_FORAGE_PROVISIONS_PER_BIOMASS: f32 = 0.05;
 const DEFAULT_FORAGE_REGROWTH_RATE: f32 = 0.25;
 const DEFAULT_FORAGE_COLLAPSE_FRACTION: f32 = 0.15;
@@ -395,6 +397,11 @@ pub struct ForageLaborConfig {
     /// > [`crate::equipment_config::EquipmentConfig::equipped_reference`], which answers `8.0` off
     /// > the item table.
     pub per_worker_biomass_capacity: f32,
+    /// **The NO-EQUIPMENT gather HOLD** - what a bare-handed gatherer's load holds, in biomass: the
+    /// far forage party's pack. Separate from [`Self::per_worker_biomass_capacity`], the per-turn
+    /// picking rate; the basket's tier supplies the equipped hold
+    /// ([`crate::equipment_config::EquipmentStat::ForageHold`]). PROVISIONAL playtest value.
+    pub hold_per_worker_biomass_capacity: f32,
     /// Biomass→provisions conversion for a gather take (the forage counterpart of
     /// `fauna.hunt.provisions_per_biomass`).
     pub provisions_per_biomass: f32,
@@ -455,6 +462,7 @@ impl Default for ForageLaborConfig {
             // an incomplete table can never quietly produce a map with no food on it.
             capacity_by_biome: HashMap::new(),
             per_worker_biomass_capacity: DEFAULT_FORAGE_PER_WORKER_BIOMASS_CAPACITY,
+            hold_per_worker_biomass_capacity: DEFAULT_FORAGE_HOLD_PER_WORKER_BIOMASS_CAPACITY,
             provisions_per_biomass: DEFAULT_FORAGE_PROVISIONS_PER_BIOMASS,
             ecology: EcologyConfig {
                 regrowth_rate: DEFAULT_FORAGE_REGROWTH_RATE,

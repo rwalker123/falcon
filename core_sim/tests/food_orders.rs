@@ -11,6 +11,8 @@ use core_sim::{
     SimulationConfig, SourcePriority, TakeSelection, DEFAULT_ESCAPEMENT_FLOOR,
 };
 
+/// A carnivore's display name: the chief's food order never hunts one.
+const CARNIVORE_SPECIES: &str = "Grey Wolf Pack";
 const FOOD: &str = "food";
 const FODDER: &str = "fodder";
 /// The per-turn need the fixture sets: well above zero so a draw exists.
@@ -281,7 +283,7 @@ fn a_herd_that_is_gone_loses_its_row_and_an_improvement_row_is_never_retired() {
             turns_left: 2,
             walk_turns: 2,
             cargo: 5.0,
-            classes: Default::default(),
+            aged: Default::default(),
             goods: Default::default(),
             rejoins_row: false,
         });
@@ -845,6 +847,11 @@ fn published_order_state(app: &mut App, kind: &str) -> sim_schema::BandOrderStat
         .unwrap_or_else(|| panic!("no {kind} order on the wire"))
 }
 
+/// How far into the stock above the floor the want in the test below reaches. Every known source
+/// is a candidate and a far one needs many porters per unit brought home, so a want near the whole
+/// reach would need more hands than the band has; a small share stays within them.
+const SHARE_OF_THE_STOCK_ABOVE_THE_FLOOR: f32 = 0.1;
+
 /// **A FULL PATCH IS ASKED FOR ITS STOCK ABOVE THE FLOOR, NOT ONLY ITS REGROWTH**: what every patch
 /// near camp can be asked (the order's reach) is above what they regrow at the floor (the published
 /// `sustainable`, which keeps meaning regrowth only), and a want between the two is not land-bound.
@@ -868,7 +875,7 @@ fn a_full_patch_above_its_floor_is_asked_for_more_than_its_regrowth() {
     );
 
     // A want between what the patches regrow and what they can be asked: refill over ten turns.
-    let between = (regrowth + asked) / 2.0;
+    let between = regrowth + (asked - regrowth) * SHARE_OF_THE_STOCK_ABOVE_THE_FLOOR;
     let target = ((between - NEED) * 10.0 / NEED).ceil() as u32 + 1;
     set_target(&mut app, band, FOOD, target);
     set_larder(&mut app, band, NEED);
@@ -879,8 +886,8 @@ fn a_full_patch_above_its_floor_is_asked_for_more_than_its_regrowth() {
         reach.want
     );
     let order = published_order_state(&mut app, FOOD);
-    assert_ne!(
-        order.limit, "land",
+    assert!(
+        reach.gives.expect("food sources are bounded") > reach.want,
         "the patches can be asked for the want, so the land is not what holds it up"
     );
     assert!(
@@ -918,8 +925,8 @@ fn a_want_past_what_the_land_gives_publishes_land_capped_at_the_pool() {
 }
 
 /// **A ROW THE PLAYER HANDS TO THE CHIEF IS NEVER DELETED BY HIS MANAGING PASS** (#904): a hunt row
-/// whose herd is no candidate (the apron is shrunk to nothing, so every herd off the camp tile is
-/// past it) stays listed under the order for several passes, then a release returns it.
+/// whose herd is no candidate (the herd's species is made a carnivore, which the chief never hunts)
+/// stays listed under the order for several passes, then a release returns it.
 #[test]
 fn a_hunt_row_handed_over_that_is_no_candidate_stays_listed_in_reserve() {
     let (mut app, band) = world();
@@ -935,10 +942,14 @@ fn a_hunt_row_handed_over_that_is_no_candidate_stays_listed_in_reserve() {
         assert!(!allocation.handed_rows.contains(&key));
     }
     {
-        let mut handle = app.world.resource_mut::<LaborConfigHandle>();
-        let mut config = (*handle.0).clone();
-        config.band_work_range = 0;
-        handle.0 = std::sync::Arc::new(config);
+        let id = key.trim_start_matches("h:").to_string();
+        let mut registry = app.world.resource_mut::<core_sim::HerdRegistry>();
+        let herd = registry
+            .herds
+            .iter_mut()
+            .find(|herd| herd.id == id)
+            .expect("the herd");
+        herd.species = CARNIVORE_SPECIES.to_string();
     }
     {
         let mut allocation = app.world.get_mut::<LaborAllocation>(band).unwrap();
@@ -1490,6 +1501,177 @@ fn inside_the_apron_a_bigger_patch_is_ranked_over_a_nearer_thin_one() {
     assert_eq!(
         first, big,
         "the full patch at {big:?} outranks the nearer thin ones (nearest {nearest:?})"
+    );
+}
+
+/// Hexes past the apron the far patch stands: the walk is priced, never refused.
+const FAR_PAST_THE_APRON: u32 = 2;
+/// Flesh keeps this many turns (`demographics_config.json` -> `keeping.classes`); a walk this long
+/// lands none of it.
+const FLESH_SHELF_TURNS: u32 = 4;
+
+type Distance = Box<dyn Fn(bevy::prelude::UVec2) -> u32>;
+
+/// The camp's hex distance function over the world's wrap, and the apron.
+fn distance_and_range(app: &App, band: Entity) -> (Distance, u32) {
+    let camp = {
+        let cohort = app.world.get::<PopulationCohort>(band).unwrap();
+        app.world
+            .get::<core_sim::Tile>(cohort.current_tile)
+            .unwrap()
+            .position
+    };
+    let (width, wrap) = {
+        let registry = app.world.resource::<core_sim::TileRegistry>();
+        (
+            registry.width,
+            app.world
+                .resource::<SimulationConfig>()
+                .map_topology
+                .wrap_horizontal,
+        )
+    };
+    let range = app
+        .world
+        .resource::<LaborConfigHandle>()
+        .get()
+        .band_work_range;
+    (
+        Box::new(move |tile| core_sim::grid_utils::hex_distance_wrapped(camp, tile, width, wrap)),
+        range,
+    )
+}
+
+/// **THE APRON IS NO GATE**: a band whose only food sources stand past `band_work_range` still gets
+/// a chief row on them (the walk lowers their net per hand, it does not remove them).
+#[test]
+fn a_band_whose_only_food_is_past_the_apron_gets_a_chief_row_on_it() {
+    let (mut app, band) = world();
+    let (distance, range) = distance_and_range(&app, band);
+    app.world
+        .resource_mut::<core_sim::HerdRegistry>()
+        .herds
+        .clear();
+    let far_patches = {
+        let mut forage = app.world.resource_mut::<core_sim::ForageRegistry>();
+        forage
+            .patches
+            .retain(|tile, _| distance(*tile) >= range + FAR_PAST_THE_APRON);
+        forage.patches.len()
+    };
+    assert!(
+        far_patches > 0,
+        "**LIVENESS**: the world has patches past the apron"
+    );
+    set_target(&mut app, band, FOOD, 1000);
+    set_larder(&mut app, band, NEED);
+    assert!(
+        !chief_rows(&app, band, FOOD).is_empty(),
+        "the chief lists a row on ground past the apron"
+    );
+}
+
+/// **THE WALK LOWERS NET PER HAND**: two identical patches, one inside the apron and one past it;
+/// the near one is the head of the chief's ranking.
+#[test]
+fn a_near_source_is_ranked_over_an_equally_productive_far_one() {
+    use bevy::prelude::UVec2;
+    let (mut app, band) = world();
+    let (distance, range) = distance_and_range(&app, band);
+    app.world
+        .resource_mut::<core_sim::HerdRegistry>()
+        .herds
+        .clear();
+    let (near, far) = {
+        let mut forage = app.world.resource_mut::<core_sim::ForageRegistry>();
+        let mut tiles: Vec<UVec2> = forage.patches.keys().copied().collect();
+        tiles.sort_by_key(|tile| (distance(*tile), tile.y, tile.x));
+        let near = *tiles
+            .iter()
+            .find(|tile| distance(**tile) <= range)
+            .expect("**LIVENESS**: a patch inside the apron");
+        let far = *tiles
+            .iter()
+            .rev()
+            .find(|tile| distance(**tile) >= range + FAR_PAST_THE_APRON)
+            .expect("**LIVENESS**: a patch past the apron");
+        let template = forage.patches.get(&near).unwrap().clone();
+        forage.patches.insert(far, template);
+        forage
+            .patches
+            .retain(|tile, _| *tile == near || *tile == far);
+        (near, far)
+    };
+    set_target(&mut app, band, FOOD, 1000);
+    set_larder(&mut app, band, NEED);
+    let shares: Vec<UVec2> = app
+        .world
+        .get::<LaborAllocation>(band)
+        .unwrap()
+        .keep_shares
+        .iter()
+        .filter(|(kind, _)| kind == FOOD)
+        .map(|(_, share)| share.tile)
+        .collect();
+    assert_eq!(
+        shares.first(),
+        Some(&near),
+        "the near patch ranks first (far {far:?}): {shares:?}"
+    );
+}
+
+/// **A SOURCE THE FOOD WOULD ROT ON THE WAY FROM IS NO CANDIDATE**: the one herd the chief hunts is
+/// stood past the apron. A walk shorter than flesh's shelf life lands its packs (it is listed); a walk
+/// of the shelf life lands none of it (it is not). No distance lever is involved: spoilage is the bound.
+#[test]
+fn a_flesh_herd_whose_walk_outlasts_the_shelf_life_is_no_candidate() {
+    use bevy::prelude::UVec2;
+    let (mut app, band) = world();
+    set_target(&mut app, band, FOOD, 1000);
+    set_larder(&mut app, band, NEED);
+    let (key, ..) = chief_rows(&app, band, FOOD)
+        .into_iter()
+        .find(|row| row.0.starts_with("h:"))
+        .expect("**LIVENESS**: the chief hunts a herd");
+    let id = key.trim_start_matches("h:").to_string();
+    let (distance, range) = distance_and_range(&app, band);
+    let (width, height) = {
+        let registry = app.world.resource::<core_sim::TileRegistry>();
+        (registry.width, registry.height)
+    };
+    let tile_at = |walk_turns: u32| -> UVec2 {
+        (0..height)
+            .flat_map(|y| (0..width).map(move |x| UVec2::new(x, y)))
+            .find(|tile| distance(*tile) == range + walk_turns)
+            .expect("a tile at that distance")
+    };
+    let listed_at = |app: &mut App, walk_turns: u32| -> bool {
+        let at = tile_at(walk_turns);
+        {
+            let mut herds = app.world.resource_mut::<core_sim::HerdRegistry>();
+            let mut kept: Vec<_> = herds
+                .herds
+                .iter()
+                .filter(|herd| herd.id == id)
+                .cloned()
+                .collect();
+            kept[0].current_pos = at;
+            herds.herds = kept;
+        }
+        app.world
+            .resource_mut::<core_sim::ForageRegistry>()
+            .patches
+            .clear();
+        set_larder(app, band, NEED);
+        chief_rows(app, band, FOOD).iter().any(|row| row.0 == key)
+    };
+    assert!(
+        listed_at(&mut app, FLESH_SHELF_TURNS - 1),
+        "**LIVENESS**: past the apron, with a walk flesh survives, the herd is listed"
+    );
+    assert!(
+        !listed_at(&mut app, FLESH_SHELF_TURNS),
+        "a walk as long as flesh keeps lands nothing, so the herd is no candidate"
     );
 }
 

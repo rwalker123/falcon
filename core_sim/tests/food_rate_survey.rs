@@ -238,6 +238,16 @@ fn forage_carry(g: &Gear, s: &Shipped) -> f32 {
     })
 }
 
+fn forage_hold(g: &Gear, s: &Shipped) -> f32 {
+    g.coverage.weighted_rate(|kit| {
+        s.equipment.forage_hold_per_worker_biomass(
+            s.labor.forage.hold_per_worker_biomass_capacity,
+            kit,
+            &g.wear,
+        )
+    })
+}
+
 fn hunt_carry(g: &Gear, s: &Shipped) -> f32 {
     g.coverage.weighted_rate(|kit| {
         s.equipment.hunt_per_worker_biomass_capacity(
@@ -2039,6 +2049,7 @@ fn plant_landed(species: &str, terrain: TerrainType, s: &Shipped) -> Landed {
         &s.labor.forage,
         &s.flora,
         forage_carry(&g, s),
+        forage_hold(&g, s),
         FULL_SEASONAL_WEIGHT,
         UNIT_OUTPUT_MULTIPLIER,
         DEFAULT_ESCAPEMENT_FLOOR,

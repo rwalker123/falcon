@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     belief::BeliefRegistry,
     components::{BandId, PopulationCohort, ResidentBand, FOOD},
-    demographics_config::DemographicsConfigHandle,
+    demographics_config::{DemographicsConfigHandle, KeepingConfig},
     intensification::{LadderConfig, LadderConfigHandle},
     ladder_ids::RungId,
     orders::FactionId,
@@ -60,7 +60,7 @@ impl SettlementStages {
 }
 
 /// What the system reads of one resident band.
-struct BandReading {
+pub(crate) struct BandReading {
     faction: FactionId,
     size: u32,
     /// The larder's food.
@@ -126,6 +126,64 @@ fn stage_reached_entry(
     .with_band(band)
 }
 
+/// **Read every resident band** as a settlement input: its people, larder, anchor, and the fixed
+/// stores it owns. The one definition both [`advance_settlements`] and the leaderless band's chief
+/// credit (`leadership::advance_leadership`) resolve a band's own stage from, so the two cannot
+/// disagree about what a band is.
+pub(crate) fn read_bands<'a>(
+    bands: impl Iterator<Item = (&'a BandId, &'a PopulationCohort)>,
+    improvements: Option<&TileImprovementRegistry>,
+    ladder: &LadderConfig,
+    keeping: &KeepingConfig,
+) -> BTreeMap<BandId, BandReading> {
+    let mut readings: BTreeMap<BandId, BandReading> = bands
+        .map(|(band, cohort)| {
+            (
+                *band,
+                BandReading {
+                    faction: cohort.faction,
+                    size: cohort.size,
+                    larder: cohort.stores.get(FOOD).to_f32().max(0.0),
+                    anchor: cohort.belief_anchor,
+                    stored: 0.0,
+                    store: None,
+                },
+            )
+        })
+        .collect();
+    // The owned fixed stores: an improvement holding a store rung, kept by a band of its people.
+    for improvement in improvements.iter().flat_map(|registry| registry.iter()) {
+        let Some(owner) = improvement.owner else {
+            continue;
+        };
+        let Some(spec) = keeping.store_spec(ladder, improvement.held_rung()) else {
+            continue;
+        };
+        let Some(reading) = readings.get_mut(&owner) else {
+            continue;
+        };
+        if reading.faction != improvement.faction {
+            continue;
+        }
+        reading.stored += improvement.contents.total().to_f32().max(0.0);
+        reading.store = higher_store(ladder, reading.store, Some(spec.rung));
+    }
+
+    readings
+}
+
+/// **One band's OWN stage index** this turn, read over itself alone: the shared resolve of
+/// [`advance_settlements`] and the chief credit.
+pub(crate) fn band_stage(
+    reading: &BandReading,
+    belief: &BeliefRegistry,
+    ladder: &LadderConfig,
+    config: &SettlementStageConfig,
+) -> u32 {
+    let inputs = settlement_inputs(&[reading], belief, ladder);
+    stage_index(&inputs, &config.stages, ladder).unwrap_or(0) as u32
+}
+
 /// **Resolve every settlement's stage**, then tell the player of any that newly reached an
 /// `announce` stage. Bands and tribes are visited in id order, so the feed is deterministic.
 #[allow(clippy::too_many_arguments)] // Bevy system parameters require explicit resource access
@@ -146,39 +204,7 @@ pub fn advance_settlements(
     let demographics = demographics.get();
     let keeping = &demographics.keeping;
 
-    let mut readings: BTreeMap<BandId, BandReading> = bands
-        .iter()
-        .map(|(band, cohort)| {
-            (
-                *band,
-                BandReading {
-                    faction: cohort.faction,
-                    size: cohort.size,
-                    larder: cohort.stores.get(FOOD).to_f32().max(0.0),
-                    anchor: cohort.belief_anchor,
-                    stored: 0.0,
-                    store: None,
-                },
-            )
-        })
-        .collect();
-    // The owned fixed stores: an improvement holding a store rung, kept by a band of its people.
-    for improvement in improvements.iter().flat_map(|registry| registry.iter()) {
-        let Some(owner) = improvement.owner else {
-            continue;
-        };
-        let Some(spec) = keeping.store_spec(&ladder, improvement.held_rung()) else {
-            continue;
-        };
-        let Some(reading) = readings.get_mut(&owner) else {
-            continue;
-        };
-        if reading.faction != improvement.faction {
-            continue;
-        }
-        reading.stored += improvement.contents.total().to_f32().max(0.0);
-        reading.store = higher_store(&ladder, reading.store, Some(spec.rung));
-    }
+    let readings = read_bands(bands.iter(), improvements.as_deref(), &ladder, keeping);
 
     let resolve = |members: &[&BandReading]| -> u32 {
         let inputs = settlement_inputs(members, &belief, &ladder);
@@ -187,7 +213,8 @@ pub fn advance_settlements(
 
     let mut next = SettlementStages::default();
     for (band, reading) in &readings {
-        next.bands.insert(*band, resolve(&[reading]));
+        next.bands
+            .insert(*band, band_stage(reading, &belief, &ladder, &config));
     }
     for tribe in tribes.iter() {
         let members: Vec<&BandReading> = tribe

@@ -71,6 +71,12 @@ pub struct Tile {
     /// hex pointing at the water body/delta the river drains into — otherwise the drawn river stops
     /// one hex short of the sea. A confluence hex carries the **union** of the chains through it.
     pub river_channel: u8,
+    /// **The plants a scenario's `tiles` section says grow here** (`docs/plan_scenarios.md` section
+    /// 2.6): sorted, deduplicated species keys, `None` everywhere worldgen does not set it. When set,
+    /// [`crate::forage::tile_flora_composition`] realizes the biome's affinity rows restricted to
+    /// these keys instead of the seeded subset, so the override is read through the one seam every
+    /// flora caller already uses. It never changes the tile's capacity: the land owns `K`.
+    pub flora_override: Option<Vec<String>>,
 }
 
 impl Tile {
@@ -7396,6 +7402,16 @@ impl LaborAllocation {
     /// order the walks would have landed last — so no exit can strand a rejoining walk on a row
     /// that is gone or too small, where it would be counted nowhere.
     pub fn settle_rejoining(&mut self, excess: ExcessRejoining) {
+        let mut no_lost = NO_CREW_ON_THIS_ACTIVITY;
+        self.settle_rejoining_discarding(excess, &mut no_lost);
+    }
+
+    /// [`Self::settle_rejoining`] that discards up to `lost` of the hands it would walk home, and
+    /// counts them off: hands the band no longer has (it lost people since they were staffed) are
+    /// not walked home, because a walker it does not have would be counted against next turn's
+    /// pool and cut again. The staffing passes its `lost_people` here, exactly as it does for the
+    /// walks a party's own cut makes ([`discard_lost_hands`]).
+    pub fn settle_rejoining_discarding(&mut self, excess: ExcessRejoining, lost: &mut u32) {
         let mut sources: Vec<LaborTarget> = Vec::new();
         for walk in self.homeward.iter().filter(|walk| walk.rejoins_row) {
             if !sources.iter().any(|seen| seen.same_source(&walk.target)) {
@@ -7403,7 +7419,7 @@ impl LaborAllocation {
             }
         }
         for source in sources {
-            self.settle_rejoining_on(&source, excess);
+            self.settle_rejoining_on_discarding(&source, excess, lost);
         }
     }
 
@@ -7412,6 +7428,16 @@ impl LaborAllocation {
     /// the shed and refilled after it, so a sweep over every source would read each staffed row's
     /// walkers as excess and discard them (with their cargo) for a hand taken off another row.
     pub fn settle_rejoining_on(&mut self, source: &LaborTarget, excess: ExcessRejoining) {
+        let mut no_lost = NO_CREW_ON_THIS_ACTIVITY;
+        self.settle_rejoining_on_discarding(source, excess, &mut no_lost);
+    }
+
+    fn settle_rejoining_on_discarding(
+        &mut self,
+        source: &LaborTarget,
+        excess: ExcessRejoining,
+        lost: &mut u32,
+    ) {
         let held = self
             .assignments
             .iter()
@@ -7438,8 +7464,15 @@ impl LaborAllocation {
                 self.homeward.remove(at);
             }
             if excess == ExcessRejoining::WalkHomePlain {
-                cut.rejoins_row = crate::work_party::WALKS_PLAIN;
-                self.homeward.push(cut);
+                let gone = (*lost).min(cut.workers);
+                if gone > NO_CREW_ON_THIS_ACTIVITY {
+                    let _ = cut.split_off(gone);
+                    *lost -= gone;
+                }
+                if cut.workers > NO_CREW_ON_THIS_ACTIVITY {
+                    cut.rejoins_row = crate::work_party::WALKS_PLAIN;
+                    self.homeward.push(cut);
+                }
             }
         }
     }
@@ -8267,7 +8300,7 @@ impl LaborAllocation {
             row.workers = applied;
             row.staffing = crew;
         }
-        self.settle_rejoining(ExcessRejoining::WalkHomePlain);
+        self.settle_rejoining_discarding(ExcessRejoining::WalkHomePlain, &mut lost_left);
     }
 
     /// **Remove a source's row outright**, telemetry included — the deliberate end of a band's
@@ -8335,17 +8368,38 @@ impl LaborAllocation {
     /// source — and nothing enrols itself (a meter is never the thing that creates a declaration,
     /// §2.4).
     pub fn declare_build(&mut self, source: BuildSource, declared: BuildJob) -> bool {
+        self.declare_build_replacing(source, declared).is_some()
+    }
+
+    /// [`Self::declare_build`], handing back what it displaced. `None` when the band has no holding
+    /// (nothing was declared); `Some(None)` for a fresh declaration; `Some(Some(entry))` when the
+    /// source already carried one, which is **the entry as it stood**.
+    ///
+    /// A herd's ring and commitment set their in-flight state on the *herd* before queueing, so a
+    /// replacement that takes the funding away must take that state with it. A caller that can reach
+    /// a herd source passes the displaced entry to [`crate::fauna::cancel_replaced_job`].
+    pub fn declare_build_replacing(
+        &mut self,
+        source: BuildSource,
+        declared: BuildJob,
+    ) -> Option<Option<BuildDeclaration>> {
         // A road's holding is its keeper, and `grade` / `pave` write it immediately before declaring
         // — the only path that can produce a `BuildSource::Road`, since the row-driven verb
         // cannot reach a source with no row. See [`road_holding_unchanged`].
         if !self.holds_build_source(&source, &road_holding_unchanged) {
-            return false;
+            return None;
         }
         match self.builds.iter_mut().find(|entry| entry.source == source) {
-            Some(entry) => entry.declared = declared,
-            None => self.builds.push(BuildDeclaration { source, declared }),
+            Some(entry) => {
+                let displaced = entry.clone();
+                entry.declared = declared;
+                Some(Some(displaced))
+            }
+            None => {
+                self.builds.push(BuildDeclaration { source, declared });
+                Some(None)
+            }
         }
-        true
     }
 
     /// **Stop a build on a source**, leaving the row, its crew, its kit and the meter exactly as they
@@ -9196,6 +9250,7 @@ impl Default for Tile {
             river_edges: 0,
             river_inflow: 0,
             river_channel: 0,
+            flora_override: None,
         }
     }
 }
@@ -9661,7 +9716,7 @@ mod tests {
             turns_left: 3,
             walk_turns: 3,
             cargo: CARGO,
-            classes: Default::default(),
+            aged: Default::default(),
             goods: Default::default(),
             rejoins_row: crate::work_party::WALKS_BACK_TO_ITS_ROW,
         });

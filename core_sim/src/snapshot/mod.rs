@@ -1082,6 +1082,7 @@ mod tests {
             river_edges: 0,
             river_inflow: 0,
             river_channel: 0,
+            flora_override: None,
         };
         let entity = Entity::from_raw(1);
         let capture = |terrain: TerrainType, graze: Option<&GrazePatch>| {

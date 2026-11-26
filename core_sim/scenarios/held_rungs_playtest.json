@@ -1,0 +1,49 @@
+{
+  "name": "held_rungs_playtest",
+  "note": "A farm, a pen on the wild sheep at (11, 11) and a felled wood already held at turn 1, and a Coppice queued on the held wood, which the elders already crew.",
+  "world": {
+    "preset": "earthlike",
+    "width": 80,
+    "height": 52,
+    "seed": 41733,
+    "profile": "late_forager_tribe",
+    "archetypes": { "major": 0, "minor": 0 }
+  },
+  "factions": [
+    {
+      "faction": 0,
+      "knowledge": ["messengers", "cultivation", "seed_selection", "herding", "penning", "woodcraft", "conservationism"],
+      "rungs": [
+        { "held": { "rung": "plant:farm", "at": [12, 12] } },
+        { "held": { "rung": "animal:pen", "herd": "sheep" } },
+        { "held": { "rung": "forestry:felling", "at": [13, 10], "material": "wood" } },
+        { "build_rung": {
+          "band": null, "verb": "coppice", "target_x": 13, "target_y": 10,
+          "herd_id": null, "material": "wood", "branch": null } }
+      ],
+      "bands": [
+        {
+          "id": "home",
+          "at": [13, 11],
+          "size": 150,
+          "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 },
+          "founding_lines": 8,
+          "larder": [{ "class": "dry", "amount": 450.0 }],
+          "outfit": {
+            "kits": { "big_game": 10, "gathering": 20 },
+            "materials": { "fibre": 20, "hide": 12 }
+          }
+        }
+      ],
+      "labor": [],
+      "roads": [],
+      "pens": [],
+      "bench": []
+    }
+  ],
+  "tiles": [],
+  "herds": [
+    { "id": "sheep", "species": "wild_sheep", "at": [11, 11], "stock": 1.0, "origin": "worldgen" }
+  ],
+  "deposits": []
+}
