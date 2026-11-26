@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 
 use bevy::prelude::*;
 use serde::de::IntoDeserializer;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sim_runtime::{TerrainTags, TerrainType};
 
 use super::{ScenarioContext, ScenarioRefusal, ScenarioSetup};
@@ -25,15 +25,17 @@ use crate::resources::TileRegistry;
 use crate::{terrain_definition, BiomeNiche};
 
 /// One tile the file overrides.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TileOverride {
     /// The tile, `[x, y]`.
     pub at: [u32; 2],
     /// A `TerrainType` name (`"AlluvialPlain"`). Absent keeps the generated biome.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub terrain: Option<String>,
     /// The plants that grow here, as `flora_config.json` species keys. Absent keeps the generated
     /// basket.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub flora: Option<Vec<String>>,
 }
 

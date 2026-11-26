@@ -63,6 +63,8 @@ required except `outfit` and `auto_craft`.
 The band's `StartingUnit` kind and tags are the archetype's **first** `starting_units` entry. An
 archetype with none is refused, because there is nothing to spawn the band as.
 
+**Export** writes every faction that has a band and fits `world.archetypes`: `at`, `size`, `ages` (the elders share is the remainder, so the three sum to one), `founding_lines`, the larder by keeping class, `knowledge` (tags held at the completion threshold), and, on the first band only, `outfit` as whole kits read greedily off the gear it holds (roster order) plus the whole units of each material the human archetype's pick list names, and `auto_craft` when on. A band opens at exactly the `size`, `ages` and `larder` the file states (`finish_scenario` stamps them again after the build turn). Gear no kit is made of, other bands' gear, hay and worn or crafted-tier gear are noted.
+
 ## Campaign Loop & System Activation
 
 ### Start Flow

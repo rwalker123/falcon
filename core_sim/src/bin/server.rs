@@ -738,6 +738,26 @@ fn main() {
                 sync_seat_delivery(&mut app, &seats, &snapshot_flat_server);
                 continue;
             }
+            // **AN EXPORT IS ANSWERED, NOT APPLIED**: it reads the world and writes a file.
+            Command::ExportScenario {
+                request_id,
+                path,
+                reply,
+            } => {
+                let answer = if world_active {
+                    handle_export_scenario(&mut app, &path)
+                } else {
+                    scenario_refused(
+                        &path,
+                        vec![core_sim::scenario::ScenarioRefusal::new(
+                            core_sim::scenario::FILE_REFUSAL_PATH,
+                            "there is no world to export",
+                        )],
+                    )
+                };
+                answer_scenario_op(&reply, request_id, answer);
+                continue;
+            }
             // **A CLAIM IS ANSWERED, NOT APPLIED** — matched here ahead of the catch-all arm for the
             // two reasons a `Query` is: it belongs in no replay log (it mutates no world), and the
             // seat registry it writes is the loop's own session state rather than anything in the
@@ -1760,6 +1780,14 @@ enum Command {
     /// Answered with a `ScenarioOp` reply on the asking connection's writer; not replayable, and it
     /// re-bases the command log like `NewGame` and `LoadGame`.
     LoadScenario {
+        request_id: u64,
+        path: String,
+        reply: Sender<QueryReplyEnvelope>,
+    },
+    /// **DEV: write the live world out as a scenario file** (`docs/plan_scenarios.md` section 2.10).
+    /// Proto field 102. Answered with a `ScenarioOp` reply; it changes no world, so it is not
+    /// replayable and the loop `continue`s past the re-capture.
+    ExportScenario {
         request_id: u64,
         path: String,
         reply: Sender<QueryReplyEnvelope>,
@@ -2913,6 +2941,7 @@ fn scenario_refused(
         ok: false,
         path: path.to_string(),
         refusals: refusals.iter().map(ToString::to_string).collect(),
+        notes: Vec::new(),
     }
 }
 
@@ -3010,6 +3039,102 @@ fn handle_load_scenario(
         ok: true,
         path: path.to_string(),
         refusals: Vec::new(),
+        notes: Vec::new(),
+    }
+}
+
+/// The environment variable naming where `export_scenario` writes a relative path.
+const SCENARIO_DIR_ENV: &str = "SIM_SCENARIO_DIR";
+/// Where a relative export path lands when [`SCENARIO_DIR_ENV`] is unset, relative to the server's
+/// working directory.
+const DEFAULT_SCENARIO_DIR: &str = "scenarios";
+
+/// Where an `export_scenario` path is written: an absolute path as it is, a relative one under
+/// `SIM_SCENARIO_DIR` (default `./scenarios`).
+fn scenario_export_path(requested: &str) -> PathBuf {
+    let requested = PathBuf::from(requested);
+    if requested.is_absolute() {
+        return requested;
+    }
+    std::env::var_os(SCENARIO_DIR_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_SCENARIO_DIR))
+        .join(requested)
+}
+
+/// A failed export: nothing was written. `ok` is false and the one refusal names the cause.
+fn scenario_export_failed(path: &str, reason: String) -> sim_runtime::ScenarioOpReply {
+    warn!(target: "shadow_scale::scenario", %path, %reason, "scenario.export.failed");
+    sim_runtime::ScenarioOpReply {
+        ok: false,
+        path: path.to_string(),
+        refusals: vec![format!(
+            "{}: {reason}",
+            core_sim::scenario::FILE_REFUSAL_PATH
+        )],
+        notes: Vec::new(),
+    }
+}
+
+/// **Write the live world out as a scenario file, changing nothing.**
+///
+/// The file's name is the path's stem. Pass 1 runs on the text just serialized and its refusals ride
+/// the reply (the file is written regardless: an export that would not reload is still the thing the
+/// dev trims by hand). `path` in the reply is where the file landed.
+fn handle_export_scenario(
+    app: &mut bevy::prelude::App,
+    requested: &str,
+) -> sim_runtime::ScenarioOpReply {
+    use core_sim::scenario::{export_scenario, parse_scenario, ScenarioContext};
+    let path = scenario_export_path(requested);
+    let shown = path.display().to_string();
+    let name = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let exported = export_scenario(&mut app.world, &name);
+    let text = match serde_json::to_string_pretty(&exported.file) {
+        Ok(text) => text,
+        Err(err) => {
+            return scenario_export_failed(&shown, format!("cannot encode the scenario: {err}"))
+        }
+    };
+    let ctx = ScenarioContext::from_world(&app.world);
+    let refusals: Vec<String> = match parse_scenario(&text, &ctx) {
+        Ok(_) => Vec::new(),
+        Err(refusals) => refusals.iter().map(ToString::to_string).collect(),
+    };
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                return scenario_export_failed(
+                    &shown,
+                    format!("cannot create '{}': {err}", parent.display()),
+                );
+            }
+        }
+    }
+    if let Err(err) = std::fs::write(&path, text) {
+        return scenario_export_failed(&shown, format!("cannot write '{shown}': {err}"));
+    }
+    for note in &exported.notes {
+        info!(target: "shadow_scale::scenario", path = %shown, %note, "scenario.export.note");
+    }
+    for refusal in &refusals {
+        warn!(target: "shadow_scale::scenario", path = %shown, %refusal, "scenario.export.would_not_load");
+    }
+    info!(
+        target: "shadow_scale::scenario",
+        path = %shown,
+        notes = exported.notes.len(),
+        refusals = refusals.len(),
+        "scenario.export.completed"
+    );
+    sim_runtime::ScenarioOpReply {
+        ok: true,
+        path: shown,
+        refusals,
+        notes: exported.notes,
     }
 }
 
@@ -8994,6 +9119,11 @@ fn command_from_payload(
             path,
             reply: reply.clone(),
         }),
+        ProtoCommandPayload::ExportScenario { request_id, path } => Some(Command::ExportScenario {
+            request_id,
+            path,
+            reply: reply.clone(),
+        }),
     }
 }
 
@@ -9510,6 +9640,9 @@ fn is_replayable(command: &Command) -> bool {
             // `LoadScenario` builds a new world exactly as `NewGame` does, so like it and `LoadGame` it
             // has nothing before it to replay from and re-bases the origin after setup.
             | Command::LoadScenario { .. }
+            // `ExportScenario` reads the world and writes a file, like the save verbs: replaying it
+            // would redo a disk write to change nothing about the world.
+            | Command::ExportScenario { .. }
             // The seat verbs. Both are about a *connection*, and a replay has none: a claim mutates
             // no world, and a release is the server's own bookkeeping about a socket that closed.
             | Command::ClaimSeat { .. }
@@ -9612,6 +9745,7 @@ fn commanding_faction(command: &Command) -> Option<(FactionId, &'static str)> {
         | Command::LoadGame { .. }
         | Command::DeleteSave { .. }
         | Command::LoadScenario { .. }
+        | Command::ExportScenario { .. }
         // ⛔ **A seat claim names a faction and is still nobody's order.** The connection does not
         // hold the seat yet, so returning it here would send the claim through the seat gate that
         // the claim itself is what satisfies — refusing every first claim ever made. `ReleaseSeat`
@@ -9723,6 +9857,16 @@ fn apply_command(app: &mut bevy::prelude::App, command: Command) {
                 request_id,
                 %path,
                 "scenario.dispatch.unreachable=load_scenario reached apply_command"
+            );
+        }
+        Command::ExportScenario {
+            request_id, path, ..
+        } => {
+            warn!(
+                target: "shadow_scale::scenario",
+                request_id,
+                %path,
+                "scenario.dispatch.unreachable=export_scenario reached apply_command"
             );
         }
         Command::SaveGame {
@@ -11528,6 +11672,51 @@ mod tests {
     fn lock_save_dir_for_test() -> std::sync::MutexGuard<'static, ()> {
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// **`export_scenario` writes a file under `SIM_SCENARIO_DIR`**, answers with where it landed and
+    /// what it could not say, and changes nothing. An absolute path is used as it is.
+    #[test]
+    fn export_scenario_writes_a_file_under_the_scenario_dir() {
+        let _guard = lock_save_dir_for_test();
+        let dir = save_scratch("export_scenario");
+        let previous = std::env::var_os(SCENARIO_DIR_ENV);
+        std::env::set_var(SCENARIO_DIR_ENV, &dir);
+        let flat = loopback_snapshot_server();
+        let (mut active, mut epoch) = (false, 0);
+        let mut app = a_world_for_saving(&mut active, &mut epoch, &flat);
+        let tick_before = app.world.resource::<SimulationTick>().0;
+
+        let reply = handle_export_scenario(&mut app, "nested/export_me.json");
+        match previous {
+            Some(value) => std::env::set_var(SCENARIO_DIR_ENV, value),
+            None => std::env::remove_var(SCENARIO_DIR_ENV),
+        }
+        assert!(reply.ok, "the export is written: {:?}", reply.refusals);
+        let written = dir.join("nested").join("export_me.json");
+        assert_eq!(reply.path, written.display().to_string());
+        let text = std::fs::read_to_string(&written).expect("the file is on disk");
+        let file: serde_json::Value = serde_json::from_str(&text).expect("it is JSON");
+        assert_eq!(file["name"], "export_me", "the name is the path's stem");
+        assert!(
+            reply
+                .notes
+                .iter()
+                .any(|note| note.contains("tile overrides are not exported")),
+            "the notes say what the file cannot: {:?}",
+            reply.notes
+        );
+        assert_eq!(
+            app.world.resource::<SimulationTick>().0,
+            tick_before,
+            "an export changes no world"
+        );
+        let absolute = dir.join("absolute.json");
+        let reply = handle_export_scenario(&mut app, &absolute.display().to_string());
+        assert!(
+            reply.ok && absolute.exists(),
+            "an absolute path is used as it is"
+        );
     }
 
     /// A small live world, built the way the server builds one.

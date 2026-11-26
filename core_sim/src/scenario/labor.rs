@@ -13,16 +13,27 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::bands::FactionSection;
 use super::herds::HerdEntry;
 use super::rungs::refuse_undeclared_herd;
-use super::{ScenarioContext, ScenarioRefusal, WorldSection};
+use bevy::prelude::World;
+
+use super::{
+    round_export, ExportIds, ExportedBand, ScenarioContext, ScenarioRefusal, WorldSection,
+};
+use crate::components::{
+    LaborAllocation, LaborAssignment, LaborTarget, OrderOwner, SourcePriority,
+};
 use crate::labor_commands::{parse_work_priority_level, LaborRole};
+use crate::orders::FactionId;
+
+/// A staffed row's `workers` when the player set no Max: the sim staffs the row.
+const NO_MAX_WORKERS: u32 = 0;
 
 /// One labor entry, tagged by its verb: `{ "assign_labor": { ... } }`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaborEntry {
     AssignLabor(AssignLaborEntry),
@@ -41,7 +52,7 @@ pub const BAND_ORDER_CLAIM: &str = "claim";
 /// `priority` belong to `set` (the wire's `BandOrderAction::Set` fields); a row is named by
 /// `target_x` + `target_y` (a patch or working) or `herd_id` (a scenario herd id) and belongs to
 /// `release` and `claim` (the wire's `Option<BandOrderRow>`).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BandOrderEntry {
     /// The band's id in this file.
@@ -49,25 +60,31 @@ pub struct BandOrderEntry {
     pub kind: String,
     /// `"set"`, `"release"` or `"claim"`.
     pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<u32>,
     pub priority: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_x: Option<u32>,
     pub target_y: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub herd_id: Option<String>,
 }
 
 /// `CommandPayload::AssignLabor`, less `faction_id`, `band_id` (now `band`) and the retired `policy`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AssignLaborEntry {
     /// The band's id in this file.
     pub band: String,
     pub role: String,
     pub workers: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_x: Option<u32>,
     pub target_y: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub fauna_id: Option<String>,
     pub species: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub floor: Option<f32>,
     pub kit_id: Option<String>,
     pub take_species: Vec<String>,
@@ -75,15 +92,18 @@ pub struct AssignLaborEntry {
 }
 
 /// `CommandPayload::WorkPriority`, less `faction_id` and with `band_id` replaced by `band`.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkPriorityEntry {
     /// The band's id in this file.
     pub band: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_x: Option<u32>,
     pub target_y: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub herd_id: Option<String>,
     pub material: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     /// `"high"`, `"normal"` or `"low"`.
     pub level: String,
@@ -201,6 +221,239 @@ pub(super) fn check(
             }
         }
     }
+}
+
+/// **One faction's standing rows, as entries**: per band in ascending `BandId` order, every row as an
+/// `assign_labor`, then a `work_priority` for each row ranked off Normal.
+///
+/// A staffed row's count is the player's Max (`0` is no Max, the sim staffs it), a scouting row's is its
+/// range in tiles, and any other row's is its crew. A band's chief orders are noted, not written:
+/// `band_order` needs a leader and a scenario cannot give a band one, so a replay would be refused; the
+/// rows a leader lists are the leader's to place and are left out with it.
+pub(super) fn export(
+    world: &World,
+    faction: FactionId,
+    ids: &ExportIds,
+    notes: &mut Vec<String>,
+) -> Vec<LaborEntry> {
+    let mut entries = Vec::new();
+    for band in ids.faction_bands.get(&faction).into_iter().flatten() {
+        let Some(allocation) = world.get::<LaborAllocation>(band.entity) else {
+            continue;
+        };
+        let chief_rows = allocation
+            .assignments
+            .iter()
+            .filter(|row| allocation.order_of_row(&row.target).is_some())
+            .count();
+        if chief_rows > 0 {
+            notes.push(format!(
+                "{}: the {chief_rows} row(s) its leader lists are not exported (the leader places \
+                 them again)",
+                band.scenario_id
+            ));
+        }
+        // **The band's orders first**: a band with a leader holds an order per ordered kind, and a
+        // scenario band is given the same orders when it loads, so each is stated (a `set`, and a
+        // whole-kind `release` where the player crews the kind).
+        for (kind, order) in &allocation.orders {
+            entries.push(LaborEntry::BandOrder(BandOrderEntry {
+                band: band.scenario_id.clone(),
+                kind: kind.clone(),
+                action: BAND_ORDER_SET.to_string(),
+                target: Some(order.target),
+                priority: Some(order.priority.as_str().to_string()),
+                target_x: None,
+                target_y: None,
+                herd_id: None,
+            }));
+            if order.owner == OrderOwner::Player {
+                entries.push(release_entry(band, kind, None, None));
+            }
+        }
+        let mut priorities = Vec::new();
+        for row in &allocation.assignments {
+            if allocation.order_of_row(&row.target).is_some() {
+                continue;
+            }
+            let Some(entry) = assign_entry(row, allocation, band, ids, notes) else {
+                continue;
+            };
+            // **A player's row under a kind the leader owns is handed over first**, as the checked-in
+            // fixtures do: the leader lists the sources he wants the moment he arrives.
+            if let Some(kind) = row_kind(&row.target) {
+                if allocation
+                    .order_for(&kind)
+                    .is_some_and(|order| order.owner == OrderOwner::Chief)
+                {
+                    entries.push(release_entry(
+                        band,
+                        &kind,
+                        entry.target_x.zip(entry.target_y),
+                        entry.fauna_id.clone(),
+                    ));
+                }
+            }
+            if row.priority != SourcePriority::Normal {
+                match priority_entry(&row.target, row.priority, band, ids) {
+                    Some(priority) => priorities.push(priority),
+                    None => notes.push(format!(
+                        "{}: a {} row is ranked {}, which a scenario cannot say",
+                        band.scenario_id,
+                        row.target.kind(),
+                        row.priority.as_str()
+                    )),
+                }
+            }
+            entries.push(LaborEntry::AssignLabor(entry));
+        }
+        entries.extend(priorities.into_iter().map(LaborEntry::WorkPriority));
+    }
+    entries
+}
+
+/// The order kind a forage, hunt or extract row answers to: food, or the material dug.
+fn row_kind(target: &LaborTarget) -> Option<String> {
+    match target {
+        LaborTarget::Forage { .. } | LaborTarget::Hunt { .. } => {
+            Some(crate::keep_on_hand::FOOD_KIND.to_string())
+        }
+        LaborTarget::Extract { material, .. } => Some(material.clone()),
+        _ => None,
+    }
+}
+
+/// A `band_order release` entry, of a whole kind or of the one row (a tile or a herd).
+fn release_entry(
+    band: &ExportedBand,
+    kind: &str,
+    tile: Option<(u32, u32)>,
+    herd: Option<String>,
+) -> LaborEntry {
+    LaborEntry::BandOrder(BandOrderEntry {
+        band: band.scenario_id.clone(),
+        kind: kind.to_string(),
+        action: BAND_ORDER_RELEASE.to_string(),
+        target: None,
+        priority: None,
+        target_x: tile.map(|(x, _)| x),
+        target_y: tile.map(|(_, y)| y),
+        herd_id: herd,
+    })
+}
+
+fn assign_entry(
+    row: &LaborAssignment,
+    allocation: &LaborAllocation,
+    band: &ExportedBand,
+    ids: &ExportIds,
+    notes: &mut Vec<String>,
+) -> Option<AssignLaborEntry> {
+    let mut entry = AssignLaborEntry {
+        band: band.scenario_id.clone(),
+        role: row.target.kind().to_string(),
+        workers: if row.target.is_staffed() {
+            row.max_workers.unwrap_or(NO_MAX_WORKERS)
+        } else {
+            row.workers
+        },
+        target_x: None,
+        target_y: None,
+        fauna_id: None,
+        species: None,
+        floor: None,
+        kit_id: row.kit.as_ref().map(|kit| kit.id().to_string()),
+        take_species: Vec::new(),
+        move_with_herd: false,
+    };
+    match &row.target {
+        LaborTarget::Forage {
+            tile,
+            floor,
+            species,
+            take_species,
+        } => {
+            entry.target_x = Some(tile.x);
+            entry.target_y = Some(tile.y);
+            entry.floor = Some(round_export(*floor));
+            entry.species = species.clone();
+            entry.take_species = take_species.keys().map(str::to_string).collect();
+        }
+        LaborTarget::Hunt {
+            fauna_id,
+            floor,
+            move_with_herd,
+        } => {
+            let Some(herd) = ids.herd(fauna_id) else {
+                notes.push(format!(
+                    "{}: a hunt row on herd {fauna_id}, which is not exported, is left out",
+                    band.scenario_id
+                ));
+                return None;
+            };
+            entry.fauna_id = Some(herd.to_string());
+            entry.floor = Some(round_export(*floor));
+            entry.move_with_herd = *move_with_herd;
+        }
+        LaborTarget::Scout => entry.workers = allocation.scouting_range_tiles(),
+        LaborTarget::Warrior | LaborTarget::Roadwork => {}
+        LaborTarget::Extract {
+            tile,
+            material,
+            floor,
+        } => {
+            entry.target_x = Some(tile.x);
+            entry.target_y = Some(tile.y);
+            entry.species = Some(material.clone());
+            entry.floor = Some(round_export(*floor));
+        }
+        LaborTarget::Tile { tile, branch } => {
+            entry.target_x = Some(tile.x);
+            entry.target_y = Some(tile.y);
+            entry.species = Some(branch.as_str().to_string());
+        }
+        LaborTarget::Band { branch, .. } => {
+            entry.species = Some(branch.as_str().to_string());
+        }
+    }
+    Some(entry)
+}
+
+fn priority_entry(
+    target: &LaborTarget,
+    priority: SourcePriority,
+    band: &ExportedBand,
+    ids: &ExportIds,
+) -> Option<WorkPriorityEntry> {
+    let mut entry = WorkPriorityEntry {
+        band: band.scenario_id.clone(),
+        target_x: None,
+        target_y: None,
+        herd_id: None,
+        material: None,
+        branch: None,
+        level: priority.as_str().to_string(),
+    };
+    match target {
+        LaborTarget::Forage { tile, .. } => {
+            entry.target_x = Some(tile.x);
+            entry.target_y = Some(tile.y);
+        }
+        LaborTarget::Hunt { fauna_id, .. } => entry.herd_id = Some(ids.herd(fauna_id)?.to_string()),
+        LaborTarget::Extract { tile, material, .. } => {
+            entry.target_x = Some(tile.x);
+            entry.target_y = Some(tile.y);
+            entry.material = Some(material.clone());
+        }
+        LaborTarget::Tile { tile, branch } => {
+            entry.target_x = Some(tile.x);
+            entry.target_y = Some(tile.y);
+            entry.branch = Some(branch.as_str().to_string());
+        }
+        LaborTarget::Band { branch, .. } => entry.branch = Some(branch.as_str().to_string()),
+        LaborTarget::Scout | LaborTarget::Warrior | LaborTarget::Roadwork => return None,
+    }
+    Some(entry)
 }
 
 /// A target tile is both coordinates or neither, and on the map.

@@ -6,6 +6,7 @@ paths:
   - "core_sim/tests/scenario_loader.rs"
   - "core_sim/tests/scenario_rungs.rs"
   - "core_sim/tests/scenario_labor_tiles.rs"
+  - "core_sim/tests/scenario_export.rs"
   - "core_sim/src/labor_commands.rs"
   - "xtask/src/main.rs"
   - "scripts/run_stack.sh"
@@ -33,6 +34,7 @@ section's is in `routes.md`, the bench section's is in `crafting.md`.
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched): `breeding_ceiling_150.json`, `kept_roads.json` and the `*_playtest.json` files |
 | Sending one | `cargo xtask command load_scenario <path>` · `scripts/run_stack.sh --scenario <path>` |
+| Exporting one | `scenario::export_scenario` (each section module's `export`); `handle_export_scenario` in `bin/server.rs`; `ExportScenarioCommand` = CommandEnvelope **102**, answered on `ScenarioOpReply` (**14**); `cargo xtask command export_scenario <path>` |
 
 ## Two passes, and nothing is built on a typo
 
@@ -83,6 +85,10 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
 - `apply_starting_inventory_effects` seeds a scenario band from its `ages` and its exact larder. The
   three shares are **divided by their sum** first (`Ages::normalised`), so a file whose shares sum to
   `0.99` within `AGES_SUM_TOLERANCE` opens at the same head-count as one that sums to `1.0`.
+- **`finish_scenario` stamps each band's `size`, `ages` and `larder` again**, first thing, through
+  the same `systems::seed_scenario_band` the Startup seeding calls: the build turn fed, aged and
+  buried the bands, and a band opens at **exactly what the file says** (before the outfit replay,
+  because the larder counts against carry).
 - A faction's listed `knowledge` tags are seeded at **full progress** (`SCENARIO_KNOWN_PROGRESS`,
   `1.0`) into the same discovery ledger the game reads, replacing the archetype's own grant of the
   same tag, so `knows_messengers` and every other `progress >= completion_threshold` gate answer
@@ -160,3 +166,51 @@ nothing for the outfit. At 150 people (90 working × 7.0 = 630 carry), a 900 dry
 allowance of 0 and any outfit is refused `OverCarry`. That is why `breeding_ceiling_150.json` ships
 450.
 
+## Export: the live world written out as a scenario
+
+`export_scenario <path>` (`CommandEnvelope` field **102**, dev-only, answered on `ScenarioOpReply`
+with its `request_id`) walks the live world and writes the file that rebuilds it. It changes no world,
+so it is not replayable (excluded beside the save and scenario verbs). `<path>` is required: a relative
+one resolves under **`SIM_SCENARIO_DIR`** (default `./scenarios`, under the server's working directory,
+which `run_stack.sh` sets to the repo root; `/scenarios/` is gitignored, `core_sim/scenarios/` is the
+tracked fixture dir), an absolute one is used as it is; the directory is created. `world.name` is the
+path's file stem.
+
+**The reply.** `ok` is true once the file is written. `path` is where it landed, `notes` is one line
+per thing the live world holds that the file cannot say (each line also goes to the server log, and the
+same lines joined are the file's `note`), and `refusals` is what the file's own **pass 1**
+(`parse_scenario` on the text just serialized) refused: the file is written regardless, because an
+export the dev trims by hand is still the thing they want. A failed write is `ok: false` with one
+refusal.
+
+**Shape.** Each section module has a free `export` beside its `check` and `apply`;
+`scenario::export_scenario(world, name)` calls them in turn. Every file and entry type is `Serialize`
+(`deny_unknown_fields` kept, no defaults; an `Option` that is `None` is absent), so the output
+reparses strictly. A float is rounded through `round_export` to `EXPORT_FLOAT_DECIMALS` places (one
+constant), so an exported value is already at the precision the file holds it at.
+
+**Ids are positional.** A band is `f<faction>_band<n>`, `n` its index among that faction's bands in
+ascending `BandId` order (a reload spawns in file order, so the lowest id comes back first and holds the
+opening outfit window). A herd is `herd<n>` in the export order: worldgen herds by runtime id, then every
+other herd by `(species key, y, x, id)`. Every section that names a band or a herd uses these ids.
+
+**What a section writes.** The per-arc tables (`campaign.md`, `work-party.md`, ...) carry each
+section's export line. Out of every section: a faction with no band, or one the world gained after it
+was built (it cannot be named by `world.archetypes`), is noted and left out; a part-learned knowledge
+tag, worn gear, hay, a leader, a pen's rings, parties in the field, pending dealings, treaties,
+goodwill and tile or band improvements are noted. `tiles` is always `[]` with the line "tile overrides
+are not exported". A band whose larder plus outfit exceeds its carry is exported anyway and noted
+("will be refused OverCarry on load; trim by hand").
+
+**The round-trip contract** is export -> load -> export giving the same file
+(`tests/scenario_export.rs`, every checked-in scenario run three turns first). Every key converges
+**except `note`, which is not compared**: it describes the live world the file was exported from (a
+herd that wandered, a party out), so a reload, which has not lived, has less to note.
+
+**What export adapts so the file loads.** A worldgen herd is written at its spawn tile (`route[0]`), and
+the herd fit matches the spawn tile first, else the tile the herd stands on after the build turn; a
+`game_` immigrant past the build turn is written as `placed`. A placed herd whose current tile fails
+the placement predicate is written at the nearest tile that passes (hex distance, then `(y, x)`) with a
+note. An outfit lists only the materials the human archetype's pick list names; any other material the
+first band holds is noted. A held rung is replayed through the build gate, so a faction must know the
+lesson it needs, which only `knowledge` tags the start profile names can say.

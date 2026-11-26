@@ -71,6 +71,8 @@ none has a point to re-derive from after an override. Temperature is not overrid
 runs in `spawn_initial_world`, before the override. A listed faction's bands sit exactly at their
 `at`, so they are unaffected.
 
+**Export** writes `tiles: []` and the note "tile overrides are not exported": the live world does not remember its overrides.
+
 ## Pipeline Stages
 1. **Macro landmask** - `land[i] = elevation[i] > sea_level`, a pure threshold of the heightfield (`generate_land_mask`, `mapgen.rs`). `target_land_pct` is satisfied upstream by `anchor_contour_to_sea_level` putting that quantile exactly on `sea_level`; `continents` is satisfied by the continental bias term in `build_elevation_field`. **No BFS, no seeds, no area quotas, no jitter** — the pre-`elevation-authority` mask grew weighted-BFS blobs from spaced seeds to fixed per-continent area targets, which is what decoupled terrain from elevation (see the callout above).
 2. **Tectonics** - Drift vectors, collision belts, fault seams, volcanic arcs, dome plateaus → mountain mask

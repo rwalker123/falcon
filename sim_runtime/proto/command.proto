@@ -1131,7 +1131,17 @@ message LoadScenarioCommand {
   string path = 2;
 }
 
-// The answer to a `load_scenario`.
+// DEV: write the live world out as a scenario file (docs/plan_scenarios.md section 2.10). Dev-only:
+// nothing in the New Game screen or the main menu sends it. Changes no world. Answered with
+// `ScenarioOpReply`.
+message ExportScenarioCommand {
+  uint64 request_id = 1;
+  // REQUIRED. A relative path resolves under the server's `SIM_SCENARIO_DIR` (default `./scenarios`);
+  // an absolute path is used as it is.
+  string path = 2;
+}
+
+// The answer to a `load_scenario` or an `export_scenario`.
 message ScenarioOpReply {
   bool ok = 1;
   // Echoes the path asked for.
@@ -1139,6 +1149,8 @@ message ScenarioOpReply {
   // Empty when `ok`. Otherwise one line per refusal, `<path in the file>: <reason>`; the whole list
   // of a file's problems rides one reply. A refused load builds nothing: the previous world stays.
   repeated string refusals = 3;
+  // An export only: one line per thing the live world holds that the file cannot say. Empty on a load.
+  repeated string notes = 4;
 }
 
 // The answer to a save / load / delete.
@@ -1966,5 +1978,7 @@ message CommandEnvelope {
     TribeOrderCommand tribe_order = 100;
     // 100 is held by `tribe_order`, so the dev scenario loader takes 101 (append-only).
     LoadScenarioCommand load_scenario = 101;
+    // 101 is held by `load_scenario`, so the dev scenario exporter takes 102 (append-only).
+    ExportScenarioCommand export_scenario = 102;
   }
 }

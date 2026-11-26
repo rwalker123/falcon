@@ -29,7 +29,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub use bands::{
     Ages, BandEntry, FactionSection, FactionSetup, LarderEntry, Outfit, ScenarioSetup,
@@ -56,12 +56,13 @@ use crate::intensification::{LadderConfig, LadderConfigHandle};
 use crate::labor_commands::BuildSourceRef;
 use crate::map_preset::{MapPresets, MapPresetsHandle};
 use crate::materials_config::{MaterialsConfig, MaterialsConfigHandle};
+use crate::orders::FactionId;
 use crate::recipes_config::{RecipesConfig, RecipesConfigHandle};
 use crate::resources::SimulationConfig;
 use crate::run_turn;
 use crate::start_profile::{
-    StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartProfiles,
-    StartProfilesHandle,
+    StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartProfileLookup,
+    StartProfiles, StartProfilesHandle,
 };
 use crate::starting_loadout::{KitAllocation, MaterialAllocation};
 use crate::world_roster::{apply_start_profile, seed_faction_roster};
@@ -94,7 +95,7 @@ impl fmt::Display for ScenarioRefusal {
 }
 
 /// The scenario file.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScenarioFile {
     pub name: String,
@@ -110,7 +111,7 @@ pub struct ScenarioFile {
 }
 
 /// The `new_game` arguments, every one required.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldSection {
     pub preset: String,
@@ -311,6 +312,164 @@ pub fn build_scenario_world(
     finish_scenario(&mut app.world, &plan.file.deposits)
 }
 
+/// **How many decimal places an exported float keeps** (ages, larders, a herd's stock, a floor).
+/// One constant for every float the export writes, so an exported value is already at the precision
+/// the file holds it at and a second export of the reloaded world writes the same number.
+pub const EXPORT_FLOAT_DECIMALS: i32 = 4;
+
+/// The base the export's decimal rounding scales by.
+const DECIMAL_BASE: f64 = 10.0;
+
+/// A band's scenario id is `f<faction>_band<n>`: these are its two literal parts.
+const BAND_ID_FACTION_PREFIX: &str = "f";
+const BAND_ID_INDEX_INFIX: &str = "_band";
+/// A herd's scenario id is `herd<n>`.
+const HERD_ID_PREFIX: &str = "herd";
+
+/// **Round an exported float to [`EXPORT_FLOAT_DECIMALS`] places.**
+pub(crate) fn round_export(value: f32) -> f32 {
+    let scale = DECIMAL_BASE.powi(EXPORT_FLOAT_DECIMALS);
+    ((f64::from(value) * scale).round() / scale) as f32
+}
+
+/// The smallest positive value an exported float can hold: one unit of the last kept decimal place.
+pub(crate) fn export_float_unit() -> f32 {
+    DECIMAL_BASE.powi(-EXPORT_FLOAT_DECIMALS) as f32
+}
+
+/// **What `export_scenario` produced**: the file, and the lines naming what the live world holds that
+/// the file cannot say.
+#[derive(Debug, Clone)]
+pub struct ScenarioExport {
+    pub file: ScenarioFile,
+    /// One line per thing left out. The same lines, joined, are `file.note`.
+    pub notes: Vec<String>,
+}
+
+/// **One resident band the export saw**, with the id the file will name it by.
+#[derive(Debug, Clone)]
+pub(crate) struct ExportedBand {
+    pub entity: Entity,
+    /// `f<faction>_band<n>`, `n` the band's index among its faction's bands in ascending `BandId`
+    /// order: the order a reload spawns them in, so the lowest id comes back first.
+    pub scenario_id: String,
+}
+
+/// **The ids every section names a band or a herd by.** Positional, so an export of a reloaded
+/// world writes the same ids: a runtime `BandId` or herd id does not survive a regeneration.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ExportIds {
+    /// The exported factions' bands, in ascending `BandId` order.
+    pub faction_bands: BTreeMap<FactionId, Vec<ExportedBand>>,
+    /// Runtime `BandId` to its scenario id.
+    pub bands: BTreeMap<BandId, String>,
+    /// Runtime herd id to its scenario id (`herd<n>`).
+    pub herds: BTreeMap<String, String>,
+}
+
+impl ExportIds {
+    pub(crate) fn band(&self, band: BandId) -> Option<&str> {
+        self.bands.get(&band).map(String::as_str)
+    }
+
+    pub(crate) fn herd(&self, runtime_id: &str) -> Option<&str> {
+        self.herds.get(runtime_id).map(String::as_str)
+    }
+
+    /// The lowest exported faction: the one a road nobody keeps is filed under.
+    pub(crate) fn first_faction(&self) -> Option<FactionId> {
+        self.faction_bands.keys().next().copied()
+    }
+}
+
+/// The scenario id of a faction's `index`-th band.
+pub(crate) fn band_scenario_id(faction: FactionId, index: usize) -> String {
+    format!(
+        "{BAND_ID_FACTION_PREFIX}{}{BAND_ID_INDEX_INFIX}{index}",
+        faction.0
+    )
+}
+
+/// The scenario id of the `index`-th herd of the export order.
+pub(crate) fn herd_scenario_id(index: usize) -> String {
+    format!("{HERD_ID_PREFIX}{index}")
+}
+
+/// The one line the `tiles` section's export says: the live world does not remember its overrides.
+const TILES_NOT_EXPORTED_NOTE: &str = "tile overrides are not exported";
+
+/// **The `world` section of the live game**: the arguments it was built from, read off the config the
+/// build wrote them into.
+fn export_world(world: &World) -> WorldSection {
+    let config = world.resource::<SimulationConfig>();
+    let archetypes = config
+        .start_profile_overrides
+        .archetypes
+        .iter()
+        .zip(
+            config
+                .start_archetype_assignment
+                .counts(config.start_profile_overrides.archetypes.len()),
+        )
+        .map(|(archetype, count)| (archetype.id.clone(), count))
+        .collect();
+    WorldSection {
+        preset: config.map_preset_id.clone(),
+        width: config.grid_size.x,
+        height: config.grid_size.y,
+        seed: config.map_seed,
+        profile: world.resource::<StartProfileLookup>().id.clone(),
+        archetypes,
+    }
+}
+
+/// **Walk the live world and write the scenario that rebuilds it** (`docs/plan_scenarios.md`
+/// section 2.10).
+///
+/// Each section module's `export` writes what its keys can say and puts the rest in `notes`; nothing
+/// live is dropped without a line. `name` is the file's stem. The world is not changed (it is `&mut`
+/// only so the herd section can build the placement query its habitat check reads).
+pub fn export_scenario(world: &mut World, name: &str) -> ScenarioExport {
+    let mut notes: Vec<String> = Vec::new();
+    let (herd_entries, herd_ids) = herds::export(world, &mut notes);
+    let world: &World = world;
+    let world_section = export_world(world);
+    let mut ids = bands::export_ids(world, &mut notes);
+    ids.herds = herd_ids;
+    let mut factions = bands::export(world, &ids, &mut notes);
+    let first_faction = ids.first_faction();
+    for section in &mut factions {
+        let faction = FactionId(section.faction);
+        section.bench = bench::export(world, faction, &ids);
+        section.labor = labor::export(world, faction, &ids, &mut notes);
+        let mut rungs = rungs::export_held(world, faction, &ids, &mut notes);
+        let (builds, pens) = rungs::export_builds_and_pens(world, faction, &ids, &mut notes);
+        rungs.extend(builds);
+        section.rungs = rungs;
+        section.pens = pens;
+        section.roads = roads::export(
+            world,
+            faction,
+            first_faction == Some(faction),
+            &ids,
+            &mut notes,
+        );
+    }
+    let deposits = deposits::export(world);
+    bands::export_unexpressed(world, &ids, &mut notes);
+    notes.push(TILES_NOT_EXPORTED_NOTE.to_string());
+    let file = ScenarioFile {
+        name: name.to_string(),
+        note: notes.join("\n"),
+        world: world_section,
+        factions,
+        tiles: Vec::new(),
+        herds: herd_entries,
+        deposits,
+    };
+    ScenarioExport { file, notes }
+}
+
 /// **What a successful load built**: the scenario ids of the bands, for the sections that name one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScenarioApplied {
@@ -334,6 +493,19 @@ pub fn finish_scenario(
     };
     let herd_setup = world.remove_resource::<ScenarioHerdSetup>();
     let mut refusals = setup.take_refusals();
+    // **A band opens at exactly what the file says.** The build turn fed, aged and buried the bands
+    // the Startup seeding made, so each one's head-count, age shape and larder are stamped again from
+    // the file, through the seeding's own body, before anything reads them (the outfit's carry counts
+    // the larder).
+    {
+        let demographics = world.resource::<DemographicsConfigHandle>().get();
+        let mut bands = world.query::<(&BandId, &mut crate::components::PopulationCohort)>();
+        for (id, mut cohort) in bands.iter_mut(world) {
+            if let Some(entry) = setup.band_entry(*id) {
+                crate::systems::seed_scenario_band(&demographics, &mut cohort, entry);
+            }
+        }
+    }
     // Herds are a setter (before the outfit replay). Every fit refusal is collected before any herd
     // or deposit is applied, so a refused file changes nothing.
     let (fitted, herd_refusals) = match &herd_setup {

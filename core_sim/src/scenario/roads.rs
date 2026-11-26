@@ -10,10 +10,10 @@
 use std::collections::BTreeSet;
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::bands::{FactionSection, FactionSetup, ScenarioSetup};
-use super::{ScenarioContext, ScenarioRefusal, WorldSection};
+use super::{ExportIds, ScenarioContext, ScenarioRefusal, WorldSection};
 use crate::build_gates::validate_road_verb;
 use crate::components::{BandId, PopulationCohort, Tile};
 use crate::intensification::{LadderConfig, RungDef, RUNG_UNSTARTED};
@@ -26,7 +26,7 @@ use crate::routes::{
 use crate::LadderConfigHandle;
 
 /// One held road tile.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoadEntry {
     /// The tile, `[x, y]`, exactly.
@@ -35,6 +35,7 @@ pub struct RoadEntry {
     pub rung: String,
     /// The band that keeps the road: a band id of this faction. Required on a rung that declares a
     /// verb (a built rung), refused on one that does not (the free floor has no keeper).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub keeper: Option<String>,
 }
 
@@ -128,6 +129,53 @@ fn check_rung_and_keeper(
         }
         _ => {}
     }
+}
+
+/// **One faction's held roads.** A road a band of the faction keeps is filed under the faction with the
+/// keeper named by its scenario id; a trail nobody keeps is filed under `adopts_trails` (the lowest
+/// exported faction). Unworn ground (a road at its branch's root) is not a road and is left out, and
+/// a road whose keeper is not an exported band of the faction is noted. Ordered by `(y, x)`.
+pub(super) fn export(
+    world: &World,
+    faction: FactionId,
+    adopts_trails: bool,
+    ids: &ExportIds,
+    notes: &mut Vec<String>,
+) -> Vec<RoadEntry> {
+    let ladder = world.resource::<LadderConfigHandle>().get();
+    let mut entries = Vec::new();
+    for (tile, road) in world.resource::<RoadRegistry>().iter() {
+        let Some(rung) = ladder.rung_by_id(road.held_rung()) else {
+            continue;
+        };
+        if ladder
+            .root_of(rung.branch)
+            .is_some_and(|root| root.order == rung.order)
+        {
+            continue;
+        }
+        let keeper = match &road.keeper {
+            Some(keeper) if keeper.faction == faction => match ids.band(keeper.band) {
+                Some(id) => Some(id.to_string()),
+                None => {
+                    notes.push(format!(
+                        "the road at ({},{}) is kept by band {}, which is not exported, and is left out",
+                        tile.x, tile.y, keeper.band.0
+                    ));
+                    continue;
+                }
+            },
+            Some(_) => continue,
+            None if adopts_trails => None,
+            None => continue,
+        };
+        entries.push(RoadEntry {
+            at: [tile.x, tile.y],
+            rung: rung.id.clone(),
+            keeper,
+        });
+    }
+    entries
 }
 
 /// The tile a band of `faction` stands on.

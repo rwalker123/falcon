@@ -82,6 +82,8 @@ A pool role names no tile: `{ "assign_labor": { "band": "home", "role": "roadwor
 (`RoadRegistry::kept_by`). A kit on a pool row is refused by the verb, as on
 the server.
 
+**Export** writes each band's rows in `BandId` order: an `assign_labor` per row (a staffed row's `workers` is its Max, `0` for none; a scouting row's is its range; floor, kit, committed species and `take_species` as stored; herds by scenario id), then a `work_priority` per row ranked off Normal. A band's orders are written as a `band_order set` (and a whole-kind `release` where the player crews the kind), a player row under a leader-owned kind is preceded by its row `release`, and the rows a leader lists are left out and noted.
+
 ## The sim staffs every source from the player's floor (#871)
 
 Design: `docs/plan_labor_at_scale.md` ("Decided"). Engine: `core_sim/src/staffing.rs`, applied at the
