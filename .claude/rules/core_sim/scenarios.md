@@ -101,9 +101,15 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   a held working's rung both open the working through `DepositRegistry::open`, so they compose in
   either order. Setter refusals are all collected, and any one stops the load before a command is
   replayed.
+- **`finish_scenario` resets a `leader: true` band's build-turn leadership** (a band of about a hundred banks
+  the practice for a chief on the build turn, and that chief's pass would list sources the file's labor rows
+  hold): the leadership record is defaulted and the chief's orders and the rows they listed are dropped. A
+  band without the key keeps what the build turn gave it, which the checked-in fixtures rely on.
 - **`finish_scenario` then gives each `leader: true` band its leader** (`bands::apply_leaders`, through the
-  `BandLeadership::appoint` body emergence runs; `leadership.md` → "Scenario section"), after the
-  re-stamp and before the herd setters, the outfit and labor, because a `band_order` entry needs one.
+  `BandLeadership::appoint` body emergence runs; `leadership.md` → "Scenario section") **after the outfit and
+  auto-craft replays and immediately before labor**: each of those restaffs its band, and a led band's
+  restaff runs its chief's managing pass. A `band_order` entry needs the leader, and the export orders the
+  labor list so no chief's pass runs before the other bands' rows exist (`work-party.md` → Export).
 - **Every band that states an `outfit` has a window to state it in.** The game opens one Grant window
   per faction, on its lowest band. Before the outfit replay `finish_scenario` opens a window of the
   same kind (`LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget: None })`: the band's own carry,

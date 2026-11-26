@@ -435,7 +435,9 @@ the stretch, the trim order), `tribe_levy::tests` (the stretch geometry), `route
 
 A scenario band takes the optional key `bands[].leader: true` (`core_sim/src/scenario/bands.rs`,
 `apply_leaders`). The file names neither the kind nor the name. The setter runs in `finish_scenario`
-after the band re-stamp and before the herd, outfit and labor steps (a `band_order` entry needs a leader),
+after the outfit and auto-craft replays and immediately before labor (a `band_order` entry needs a leader, and a
+led band's restaff runs its chief's managing pass; a `leader: true` band's build-turn leadership, orders and
+listed rows are reset first),
 and gives the band its leader through `BandLeadership::appoint(axis_value, turn, name)`, the body
 `BandLeadership::emerge` runs after its `ready` check: the kind is `LeaderKind::for_axis_value` of the
 band's own `HierarchicalEgalitarian` culture reading, the name is `name_for_band(map_seed, band)`,

@@ -374,3 +374,78 @@ fn a_band_with_a_leader_exports_leader_true_and_the_reload_has_it() {
         .count();
     assert!(held >= 1, "the reload holds the leader");
 }
+
+/// A led band whose chief would list the herds another band of its people hunts: `home` holds a
+/// leader and an empty labor list, `other` (a neighbour with no leader) hunts every herd.
+fn led_band_beside_a_hunter() -> String {
+    let mut file: Value = serde_json::from_str(HERDS_PENS).expect("the fixture is JSON");
+    let faction = &mut file["factions"][0];
+    faction["pens"] = serde_json::json!([]);
+    faction["rungs"] = serde_json::json!([]);
+    faction["bands"][0]["leader"] = serde_json::json!(true);
+    faction["bands"]
+        .as_array_mut()
+        .expect("bands")
+        .push(serde_json::json!({
+            "id": "other", "at": [14, 11], "size": 60, "outfit": { "kits": { "gathering": 1 }, "materials": {} },
+            "ages": { "children": 0.3, "working": 0.6, "elders": 0.1 },
+            "founding_lines": 4, "larder": []
+        }));
+    let hunts: Vec<Value> = ["sheep", "new_aurochs", "thin_boar", "flock"]
+        .iter()
+        .map(|herd| {
+            serde_json::json!({ "assign_labor": {
+                "band": "other", "role": "hunt", "workers": 1, "fauna_id": herd,
+                "take_species": [], "move_with_herd": false
+            }})
+        })
+        .collect();
+    faction["labor"] = Value::Array(hunts);
+    file.to_string()
+}
+
+#[test]
+fn a_chief_is_replayed_after_the_other_bands_rows_it_would_otherwise_claim() {
+    let text = led_band_beside_a_hunter();
+    let a = round_trips(&text, TURNS_BEFORE_EXPORT);
+    let labor = a["factions"][0]["labor"].as_array().expect("labor");
+    let band_of = |entry: &Value| {
+        entry
+            .as_object()
+            .expect("entry")
+            .values()
+            .next()
+            .expect("body")["band"]
+            .clone()
+    };
+    let first_order = labor
+        .iter()
+        .position(|entry| entry.get("band_order").is_some())
+        .expect("the led band exports its orders");
+    assert!(first_order > 0, "the hunter's rows are written first");
+    assert!(
+        labor[..first_order]
+            .iter()
+            .all(|entry| band_of(entry) == "f0_band1"),
+        "every unled band's rows come before the first chief order"
+    );
+    // The control: the same entries chief-first are refused, so the ordering is what the test proves.
+    let mut reversed = a.clone();
+    reversed["factions"][0]["labor"]
+        .as_array_mut()
+        .expect("labor")
+        .reverse();
+    let mut app = build_test_app();
+    let plan = parse_scenario(
+        &reversed.to_string(),
+        &ScenarioContext::from_world(&app.world),
+    )
+    .expect("pass 1");
+    let refusals = build_scenario_world(&mut app, &plan).expect_err("chief first is refused");
+    assert!(
+        refusals
+            .iter()
+            .any(|refusal| format!("{refusal:?}").contains("already hunts")),
+        "refused for the held source: {refusals:?}"
+    );
+}

@@ -508,9 +508,44 @@ pub fn finish_scenario(
             }
         }
     }
-    // **Leaders are a setter** (a `band_order` entry needs one), after the re-stamp and before anything
-    // that reads or replays a band.
-    bands::apply_leaders(world, &setup, &mut refusals);
+    // **A band the file says is led starts the leader afresh.** A big band can bank the practice for
+    // a chief on the build turn, and that chief's first pass lists every source nobody holds yet,
+    // ahead of the file's own labor rows (which would then be refused "already hunts"). So a
+    // `leader: true` band's build-turn leadership is reset to the default and the chief's orders and
+    // the rows they listed are dropped; `bands::apply_leaders` then appoints it where the labor
+    // replay can see it. A band without the key keeps whatever the build turn gave it.
+    {
+        let mut bands = world.query::<(
+            &BandId,
+            &mut crate::leadership::BandLeadership,
+            &mut crate::components::LaborAllocation,
+        )>();
+        for (id, mut leadership, mut allocation) in bands.iter_mut(world) {
+            let led_by_file = setup
+                .band_entry(*id)
+                .is_some_and(|entry| entry.leader == Some(true));
+            if !led_by_file || leadership.leader.is_none() {
+                continue;
+            }
+            *leadership = crate::leadership::BandLeadership::default();
+            let listed: Vec<_> = allocation
+                .assignments
+                .iter()
+                .filter(|row| allocation.order_of_row(&row.target).is_some())
+                .map(|row| row.target.clone())
+                .collect();
+            for target in &listed {
+                allocation.drop_source_row(target);
+            }
+            allocation.orders.clear();
+            allocation.order_rows.clear();
+            allocation.adopt_pending.clear();
+            allocation.handed_rows.clear();
+            allocation.keep_shares.clear();
+            allocation.keep_sustainable.clear();
+            allocation.unannounced_takeover.clear();
+        }
+    }
     // Herds are a setter (before the outfit replay). Every fit refusal is collected before any herd
     // or deposit is applied, so a refused file changes nothing.
     let (fitted, herd_refusals) = match &herd_setup {
@@ -608,6 +643,11 @@ pub fn finish_scenario(
             }
         }
     }
+    // **Leaders are a setter** (a `band_order` entry needs one), applied after the outfit and auto-craft
+    // replays and immediately before labor: each of those restaffs its band, and a led band's restaff
+    // runs its chief's managing pass, which lists every source no band holds yet, ahead of the file's
+    // labor rows that hold them.
+    bands::apply_leaders(world, &setup, &mut refusals);
     // **Labor after every faction's outfit** (plan section 2.8 step 6): the outfit is an ordinary
     // revision of the opening window, and a work row's gear is read against the outfit it ends up with.
     if !refusals.is_empty() {

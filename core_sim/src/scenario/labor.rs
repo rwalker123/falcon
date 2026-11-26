@@ -236,11 +236,21 @@ pub(super) fn export(
     ids: &ExportIds,
     notes: &mut Vec<String>,
 ) -> Vec<LaborEntry> {
-    let mut entries = Vec::new();
+    // **Two phases, so no chief's managing pass runs before the other bands' own rows exist.** Any
+    // command on a led band restaffs it and runs its chief's pass, which lists every source no band of
+    // its people holds yet; a band whose row was written after that would be refused "already hunts".
+    // So the bands without a leader come first, in `BandId` order, and each led band's whole sequence
+    // (its orders, the releases, its own rows) follows, also in `BandId` order.
+    let mut unled = Vec::new();
+    let mut led = Vec::new();
     for band in ids.faction_bands.get(&faction).into_iter().flatten() {
         let Some(allocation) = world.get::<LaborAllocation>(band.entity) else {
             continue;
         };
+        let is_led = world
+            .get::<crate::leadership::BandLeadership>(band.entity)
+            .is_some_and(|leadership| leadership.leader.is_some());
+        let mut entries = Vec::new();
         let chief_rows = allocation
             .assignments
             .iter()
@@ -308,8 +318,13 @@ pub(super) fn export(
             entries.push(LaborEntry::AssignLabor(entry));
         }
         entries.extend(priorities.into_iter().map(LaborEntry::WorkPriority));
+        if is_led {
+            led.push(entries);
+        } else {
+            unled.push(entries);
+        }
     }
-    entries
+    unled.into_iter().chain(led).flatten().collect()
 }
 
 /// The order kind a forage, hunt or extract row answers to: food, or the material dug.
