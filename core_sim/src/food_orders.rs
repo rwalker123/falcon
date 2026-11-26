@@ -319,8 +319,9 @@ fn candidate_of(
     // for a gather, the sled for a hunt (a herd's pack is seated in whole animals).
     let kit = sources.equipment.default_kit(target.kit_job());
     let pack = if herd.is_empty() {
-        sources.equipment.forage_per_worker_biomass_capacity(
-            sources.labor.forage.per_worker_biomass_capacity,
+        // The gather pack is the basket's HOLD, not its picking rate.
+        sources.equipment.forage_hold_per_worker_biomass(
+            sources.labor.forage.hold_per_worker_biomass_capacity,
             &kit,
             inputs.site.band_kit,
         )

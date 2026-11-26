@@ -283,7 +283,7 @@ fn a_herd_that_is_gone_loses_its_row_and_an_improvement_row_is_never_retired() {
             turns_left: 2,
             walk_turns: 2,
             cargo: 5.0,
-            classes: Default::default(),
+            aged: Default::default(),
             goods: Default::default(),
             rejoins_row: false,
         });

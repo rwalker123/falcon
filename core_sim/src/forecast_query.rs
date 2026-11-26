@@ -1833,6 +1833,7 @@ fn work_party_forecast(
                 &labor.forage,
                 &flora,
                 pricing.forage_carry,
+                pricing.forage_hold,
                 seasonal,
                 output_multiplier,
                 ask.floor,

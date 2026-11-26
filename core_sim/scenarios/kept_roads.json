@@ -29,8 +29,8 @@
           "founding_lines": 8,
           "larder": [{ "class": "dry", "amount": 450.0 }],
           "outfit": {
-            "kits": {},
-            "materials": { "stone": 20 }
+            "kits": { "big_game": 11, "gathering": 24, "sledding": 7, "roadbuilding": 5, "paving": 5 },
+            "materials": { "fibre": 20, "hide": 12, "stone": 20 }
           }
         }
       ],

@@ -7416,6 +7416,16 @@ impl LaborAllocation {
     /// order the walks would have landed last — so no exit can strand a rejoining walk on a row
     /// that is gone or too small, where it would be counted nowhere.
     pub fn settle_rejoining(&mut self, excess: ExcessRejoining) {
+        let mut no_lost = NO_CREW_ON_THIS_ACTIVITY;
+        self.settle_rejoining_discarding(excess, &mut no_lost);
+    }
+
+    /// [`Self::settle_rejoining`] that discards up to `lost` of the hands it would walk home, and
+    /// counts them off: hands the band no longer has (it lost people since they were staffed) are
+    /// not walked home, because a walker it does not have would be counted against next turn's
+    /// pool and cut again. The staffing passes its `lost_people` here, exactly as it does for the
+    /// walks a party's own cut makes ([`discard_lost_hands`]).
+    pub fn settle_rejoining_discarding(&mut self, excess: ExcessRejoining, lost: &mut u32) {
         let mut sources: Vec<LaborTarget> = Vec::new();
         for walk in self.homeward.iter().filter(|walk| walk.rejoins_row) {
             if !sources.iter().any(|seen| seen.same_source(&walk.target)) {
@@ -7423,7 +7433,7 @@ impl LaborAllocation {
             }
         }
         for source in sources {
-            self.settle_rejoining_on(&source, excess);
+            self.settle_rejoining_on_discarding(&source, excess, lost);
         }
     }
 
@@ -7432,6 +7442,16 @@ impl LaborAllocation {
     /// the shed and refilled after it, so a sweep over every source would read each staffed row's
     /// walkers as excess and discard them (with their cargo) for a hand taken off another row.
     pub fn settle_rejoining_on(&mut self, source: &LaborTarget, excess: ExcessRejoining) {
+        let mut no_lost = NO_CREW_ON_THIS_ACTIVITY;
+        self.settle_rejoining_on_discarding(source, excess, &mut no_lost);
+    }
+
+    fn settle_rejoining_on_discarding(
+        &mut self,
+        source: &LaborTarget,
+        excess: ExcessRejoining,
+        lost: &mut u32,
+    ) {
         let held = self
             .assignments
             .iter()
@@ -7458,8 +7478,15 @@ impl LaborAllocation {
                 self.homeward.remove(at);
             }
             if excess == ExcessRejoining::WalkHomePlain {
-                cut.rejoins_row = crate::work_party::WALKS_PLAIN;
-                self.homeward.push(cut);
+                let gone = (*lost).min(cut.workers);
+                if gone > NO_CREW_ON_THIS_ACTIVITY {
+                    let _ = cut.split_off(gone);
+                    *lost -= gone;
+                }
+                if cut.workers > NO_CREW_ON_THIS_ACTIVITY {
+                    cut.rejoins_row = crate::work_party::WALKS_PLAIN;
+                    self.homeward.push(cut);
+                }
             }
         }
     }
@@ -8287,7 +8314,7 @@ impl LaborAllocation {
             row.workers = applied;
             row.staffing = crew;
         }
-        self.settle_rejoining(ExcessRejoining::WalkHomePlain);
+        self.settle_rejoining_discarding(ExcessRejoining::WalkHomePlain, &mut lost_left);
     }
 
     /// **Remove a source's row outright**, telemetry included — the deliberate end of a band's
@@ -9703,7 +9730,7 @@ mod tests {
             turns_left: 3,
             walk_turns: 3,
             cargo: CARGO,
-            classes: Default::default(),
+            aged: Default::default(),
             goods: Default::default(),
             rejoins_row: crate::work_party::WALKS_BACK_TO_ITS_ROW,
         });

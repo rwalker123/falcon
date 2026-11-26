@@ -871,6 +871,7 @@ in `query_seat_gate.rs`, and `sim_runtime`'s `the_staffing_preview_round_trips`.
 | `src/data/labor_config.json` (`food_first_window_turns`) | **5**, playtest dial, `0` switches it off: how many turns ahead the staffing walks the larder for a missed meal before it lets builders work (see "A band that would go hungry feeds itself before it builds"). A Workbench row (`/food_first_window_turns`) |
 | `src/data/labor_config.json` (keep-on-hand) | `keep_on_hand_refill_turns` (**10**, validated `>= 1`, playtest dial): the turns an ordered material's keep-on-hand deficit is spread over - the dig takes `draw + deficit / this` |
 | `src/data/labor_config.json` (`band_orders`) | `ordered_kinds` (**`["stone", "wood", "food", "fodder"]`**, playtest lever): the kinds a chief takes orders for - `food`, `fodder` or a material id; each listed kind needs a `starting_target` above zero. `starting_target` (**stone 30, wood 30, food 20, fodder 10**, playtest levers): the target a chief opens each kind at when he arrives, and a claim falls back to - units for a material, turns for food and fodder. `learning_floor` (**0.8**, validated in `(0.5, 1.0]`, playtest dial): the floor the chief works his food and fodder rows at while the order is at or above its target; it **must equal the client's Learning preset**, `SourceForecast.FLOOR_PRESET_VALUES[FLOOR_PRESET_LEARN]` (`0.80`, `clients/godot_thin_client/src/scripts/ui/hud/SourceForecast.gd`) - pinned by `food_orders::the_shipped_learning_floor_is_the_clients_learning_preset`, which reads the client file. Below the target he works Best. The `starting_target` values are Workbench rows (`/band_orders/starting_target/*`). `storage_build_min_saved` (**0.2**) gates a storage rung as a proposal candidate. `proposal_idle_turns_notice` (**3**, `>= 1`), `proposal_idle_turns_wasted` (**8**, `>=` the notice) and `proposal_not_now_turns` (**20**, `>= 1`), and `proposal_low_yield_share` (**0.5**, finite and `> 0`: the share of one person's meal a chief food row's take head must reach not to count as low-yield) are the chief's build proposal levers ("A chief proposes a build"), all Workbench rows and playtest dials |
+| `src/data/labor_config.json` (`forage.hold_per_worker_biomass_capacity`) | **12.0**, PROVISIONAL: what a bare-handed gatherer's load holds, in biomass — the far forage party's pack without a basket. The basket's tier supplies `forage_hold` **40.0** in `equipment.json`. Separate from `forage.per_worker_biomass_capacity` (**1.6**), the per-turn picking rate |
 | `src/data/supply_network_config.json` | Read, not written: `reach_tiles` is subtracted from `supply::free_pooling_reach_tiles` to give the **road bonus** — how much of a walk a road takes away. `friction` is **not** read: distance is paid in walking |
 | `src/data/materials.json` | Read, not written: every material's required **`weight`** — biomass-equivalent mass per unit, validated positive and finite — is what a deposit's pack is divided by (wood **2.4**, stone **3.0**; every value PROVISIONAL, stated in the file's `_comment_weight`) |
 | `src/data/equipment.json` | Read, not written: the extract kits `sledding` (`sled`), `woodcutting` (`sled` + `axe`) and `stonework` (`sled` + `wedges`), claimed whole like every job's kit, so a far working's porters haul on the sled on every rung |
@@ -1013,6 +1014,41 @@ and the walk ride the pack), `systems::labor::transit_rot_tests` (the landing ru
 `work_party_caravan::a_walk_longer_than_flesh_keeps_loses_the_pack_and_a_shorter_one_does_not` (a real
 far hunt at both distances, each with a liveness assertion that food landed).
 
+### Food ages at the source, and a porter leaves before it spoils
+
+**The load is FIFO lots by the turn they were taken** (`work_party::Lot { age, cargo, bulk, classes,
+goods }`, `WorkParty::load`). Each turn the party's walk is above nothing, every lot in the load
+keeps one more turn (`open_turn`). A pack takes the **oldest lots first** (`take_pack`), and each
+slice of a pack carries the age its food had kept when its porter set out (`AgedCargo`, on
+`Walker::lots`, `LandedPack::aged` and `HomewardWalk::aged`). A walk of no length ages nothing and
+lands at once.
+
+- **Landing.** A class is lost whole when `shelf <= age_at_departure + walk`
+  (`spoilage::rots_in_transit` on that sum; `work_party::lost_on_landing`), and a surviving slice
+  lands aged by `age + walk` (`FoodMix::from_aged_weights`, `systems::labor::land_food_home`), so its
+  shelf life counts from the take. `TransitRot::kept_of_landed` strikes the same rule per slice, the
+  eaten cap included (`meals_per_turn x (shelf - age - walk)`).
+- **Early departure.** While a hand is present, a porter leaves with a part-full pack (the oldest
+  lots, up to one pack) when waiting one more turn would lose the oldest food lot on landing
+  (`shelf > age + walk` and `shelf <= age + 1 + walk` for some class in it). Otherwise it waits for
+  a full pack. Materials and fodder never rot and never trigger it. Fresh plant keeps 8 turns: on a
+  6-turn walk a porter leaves the turn the lot has kept 1 turn.
+- **Rot at the source.** Food in the load that can no longer be saved (`shelf <= age + walk`, e.g.
+  no hand was present) rots where it lies and leaves the load (`WorkParty::rot_the_load`). It was
+  never income, so no ledger term answers for it, exactly as an abandoned load; the forecast counts
+  it in its spoiled figure (`WorkParty::rotted_at_source`, transient, taken by
+  `forecast_caravan_carrying`).
+- **One rule everywhere.** `close_turn_classed` takes the food webs' `KeepingConfig`
+  (`NO_KEEPING` on the deposit web) and is called by the turn's take site, the foot-of-pass
+  settlement and `forecast_caravan_carrying`, which hands each projected take its classes from the
+  row's `TransitRot` shares. So the turn, the assign-time seed, the compose query and the chief's
+  ranking (`keep_on_hand::caravan_net_per_hand`) step the same rule. Homeward walks (`walk_home`,
+  `cut_crew`, `bring_the_party_home`) carry the ages the same way. `SAVE_FORMAT_VERSION` 74.
+
+Pinned by `work_party::tests::{a_baskets_pack_is_its_hold_and_a_faster_hand_fills_it_sooner_not_bigger,
+a_porter_leaves_with_a_part_full_pack_before_the_food_spoils}` and
+`forage_cultivation::a_far_forage_rows_published_rate_home_is_the_rate_the_query_quotes`.
+
 ### No individual hunters
 
 Nobody is simulated as a unit and nothing moves on the map. It is the codebase's ordinary pattern
@@ -1084,10 +1120,31 @@ if the larder cannot cover them the band bears the shortfall and the post stands
 > Do not reintroduce a per-party food account: the band's consumption is the one place its people
 > eat.
 
-**One pack is one hunter's carry, seated by the web's own rule** — `fauna::one_pack_biomass` on the
-animal web (whole animals, **rounded down**), continuous on the plant web. It is deliberately **not**
-`fauna::animals_the_pack_seats`, which rounds **up** because it answers the kill-stop question — the
-animal the pack cannot seat whole is still killed whole.
+**One pack is what one hand's container holds, seated by the web's own rule.** The pack is the
+container's HOLD, a fact about the container, and it is separate from the rate a hand fills it at
+(Ray: *a container's hold capacity is separate from the harvest rate; picking will get faster in
+future, but that does not change what a basket holds*). Gear that makes a hand faster fills the pack
+sooner and never makes it bigger.
+
+| web | the pack (bulk) | the per-turn rate it is filled at | where each is resolved |
+|---|---|---|---|
+| gather | `CaravanPricing::forage_hold` — the basket's `forage_hold` stat (**40** equipped, `equipment.json`, on the `plain` tier) or `labor_config.forage.hold_per_worker_biomass_capacity` (**12**, bare hands), coverage-weighted | `CaravanPricing::forage_carry` — the `forage_carry` stat (**8** basketed, **1.6** bare), the projection's crew term only | `EquipmentConfig::forage_hold_per_worker_biomass` beside `forage_per_worker_biomass_capacity` |
+| hunt | `fauna::one_pack_biomass(herd_carry_rate(haul_carry), body_mass)` — whole animals, **rounded down** | `haul_carry` bounds a kill per turn too | `CaravanPricing::haul_carry` (sled `hunt_carry` **40**, bare **12**) |
+| deposit | `material_pack(haul_carry, weight)` — the sled's hold over the material's weight | the same, `CrewLift.carry` bounds a turn's cut | `CaravanPricing::haul_carry` |
+
+The sled's hold and its per-turn haul are one stat today (`hunt_carry`); the basket's are two
+(`forage_hold`, `forage_carry`). **`forage_hold` 40 / 12 are PROVISIONAL playtest values**, set equal
+to the sled's and the bare haul so the two webs open alike; the equipped value is an item stat (not a
+Workbench row) and the bare baseline is a `labor_config.json` key. Every reader of the gather pack
+takes the hold: the turn's `deliver_take_home`, `forecast_forage_caravan`'s `hold` argument (its
+`carry_per_worker` stays the picking rate), the assign-time seed, the compose query and the chief's
+`food_orders` candidate ranking (`caravan_net_per_hand`). Before this a basket's pack was its
+per-turn picking rate, so it "filled" every turn (8 biomass is about 0.45 food at a 0.056
+provisions-per-biomass patch) and the gatherer walked home after every turn of picking; now it picks
+for `hold / rate` turns first.
+
+It is deliberately **not** `fauna::animals_the_pack_seats`, which rounds **up** because it answers
+the kill-stop question — the animal the pack cannot seat whole is still killed whole.
 **Nothing is walked away from**: a carcass too big for one pack goes a pack's worth at a time and
 the remainder stays in the load for the next porter. Every hunt — a far posting and a camp kill
 within `band_work_range` alike — keeps `take.killed_biomass()`, not `take.carried`, and its row's
@@ -1418,7 +1475,7 @@ them; they rejoin only as they arrive) and `work_party::tests::a_deep_cut_turns_
 > scout. **A staffed row is not shed at all** (#871): its hands are zeroed before the
 > shed walks and refilled from the smaller pool after it, so only the hand-set crews (Warrior, a need row's
 > muster) are trimmed; the hands a staffed row's party loses to the smaller pool
-> are discarded the same way (`apply_staffing`'s `lost_people`). So a row the shed **trims** reaches `post_a_party` below its party's crew
+> are discarded the same way (`apply_staffing`'s `lost_people`), **including the rejoining hands a staffing cut flips off a row** (`LaborAllocation::settle_rejoining_discarding`: only the hands beyond the people lost walk home). So a row the shed **trims** reaches `post_a_party` below its party's crew
 > (the only way it can, a player's cut having already matched them), and the party sheds the
 > difference through `cut_crew`'s own order — the hands at the source first, then porters nearest
 > home, whose packs go with them — with its walks discarded. A row the shed **drops** goes through

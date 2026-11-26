@@ -215,7 +215,7 @@ pub(crate) fn labor_assignment_to_state(
             assignment
                 .party
                 .as_ref()
-                .map_or(0.0, |party| party.load_cargo)
+                .map_or(0.0, |party| party.load_cargo())
         } else {
             0.0
         },

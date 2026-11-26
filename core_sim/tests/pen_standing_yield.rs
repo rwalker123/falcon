@@ -1471,8 +1471,10 @@ fn a_far_pens_milk_and_fleece_are_in_its_caravan_forecast() {
                 "a six-turn walk spoils the milk: spoiled {spoiled_home}, keeps {keeps}"
             );
         } else {
+            // Milk that waits at the source for a porter to come back ages there, so a walk inside
+            // flesh's shelf life still spoils some of it at the source: the pen's keepers are few.
             assert!(
-                net_home > 0.0 && spoiled_home == 0.0,
+                net_home > 0.0 && keeps == 0.0,
                 "a three-turn walk brings the milk home: net {net_home}, spoiled {spoiled_home}"
             );
         }

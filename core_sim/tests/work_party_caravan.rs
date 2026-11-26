@@ -580,17 +580,31 @@ fn a_walk_longer_than_flesh_keeps_loses_the_pack_and_a_shorter_one_does_not() {
 
     let (mut far, far_band) = world_hunting_at(8);
     let (far_income, far_spoiled, far_larder) = run_a_caravan(&mut far, far_band, TURNS);
-    assert!(
-        far_income > 0.0,
-        "liveness: the far party lands packs within {TURNS} turns"
+    // **Food ages at the source**: flesh taken for a six-turn walk is already past saving the turn
+    // it is taken, so it rots where it lies and no porter ever walks it. It was never income, so
+    // the ledger sees neither a landing nor a spoilage; the row's forecast states the loss.
+    assert_eq!(
+        far_income, 0.0,
+        "no flesh pack is walked on a six-turn walk"
     );
     assert!(
-        (far_spoiled - far_income).abs() < LEDGER_EPSILON,
-        "every flesh pack on a six-turn walk rots: spoiled {far_spoiled} vs landed {far_income}"
+        far_spoiled.abs() < LEDGER_EPSILON && far_larder.abs() < LEDGER_EPSILON,
+        "the ledger is untouched by food that rotted at the source: spoiled {far_spoiled}, larder {far_larder}"
     );
+    let far_party = far
+        .world
+        .get::<LaborAllocation>(far_band)
+        .and_then(|allocation| {
+            allocation
+                .assignments
+                .first()
+                .and_then(|row| row.party.clone())
+        })
+        .expect("the far row carries a party");
     assert!(
-        far_larder < LEDGER_EPSILON,
-        "the larder gains nothing from a rotten caravan: {far_larder}"
+        far_party.spoiled_rate_home > 0.0,
+        "liveness: the party is cutting food, and the forecast counts it spoiled ({})",
+        far_party.spoiled_rate_home
     );
 
     let (mut near, near_band) = world_hunting_at(5);
@@ -639,8 +653,9 @@ fn a_far_hunt_publishes_and_quotes_the_take_its_walk_spoils() {
                 break;
             }
         }
+        // Flesh taken for a walk longer than its shelf life rots at the source and is never walked.
         assert!(
-            saw_the_road,
+            saw_the_road || rots,
             "liveness: the {distance}-hex party puts somebody on the road"
         );
         let published = published_party(&app);
@@ -665,8 +680,6 @@ fn a_far_hunt_publishes_and_quotes_the_take_its_walk_spoils() {
                 published.net_rate_home > 0.0 && answer.rate_home > 0.0,
                 "liveness: a three-turn walk brings food home"
             );
-            assert_eq!(published.spoiled_rate_home, 0.0);
-            assert_eq!(answer.spoiled_rate_home, 0.0);
             assert_eq!(published.transit_keeps_turns, 0.0);
             assert_eq!(answer.transit_keeps_turns, 0.0);
         }
@@ -819,7 +832,9 @@ const TURNS_TO_WALK_HOME: usize = 20;
 /// - all of it is booked on the route arm, and the rot is `foodSpoiled`'s.
 #[test]
 fn a_cancelled_far_hunt_walks_every_pack_home_and_rots_it_by_its_walk() {
-    for (distance, walk, rots) in [(5_u32, 3_u32, false), (8, 6, true)] {
+    // Eight hexes out (a six-turn walk past flesh's four) is no longer a case: flesh taken for it
+    // rots at the source and no porter ever carries it, so there is no caravan to cancel with food.
+    for (distance, walk, rots) in [(5_u32, 3_u32, false)] {
         let (mut app, band) = world_hunting_at(distance);
         let carried = a_caravan_carrying_food(&mut app, band);
         let larder_before = larder(&app, band);
@@ -963,14 +978,15 @@ fn a_caravan_carrying_food(app: &mut App, band: Entity) -> f32 {
             .and_then(|allocation| allocation.assignments.first())
             .and_then(|row| row.party.clone())
             .expect("the far row carries a party");
-        // A hand at the source too, so the load has a carrier — a load nobody is there to carry
-        // is left behind when the party stands down.
-        if party.hunters_on_the_road() > 0 && party.load_cargo > 0.0 && party.hunters_present() > 0
-        {
-            return party.load_cargo + party.on_the_road.iter().map(|w| w.cargo).sum::<f32>();
+        // A hand at the source too. **Food ages at the source and a porter leaves before it
+        // spoils**, so on a walk flesh survives the load is usually empty the turn a pack leaves:
+        // what the party carries is the packs on the road plus whatever the load still holds.
+        let carried = party.load_cargo() + party.on_the_road.iter().map(|w| w.cargo()).sum::<f32>();
+        if party.hunters_on_the_road() > 0 && carried > 0.0 && party.hunters_present() > 0 {
+            return carried;
         }
     }
-    panic!("liveness: the caravan must put somebody on the road with food still in the load");
+    panic!("liveness: the caravan must put somebody on the road carrying food");
 }
 
 /// What the band's food ledger has taken in on its route arm so far — where a party's homecoming
@@ -1190,7 +1206,7 @@ fn first_pack_on_the_road(app: &mut App, band: Entity) -> f32 {
         if let Some(walker) =
             extract_party(app, band).and_then(|party| party.on_the_road.first().cloned())
         {
-            return walker.cargo;
+            return walker.cargo();
         }
     }
     panic!("liveness: the caravan must put a porter on the road");
@@ -1503,10 +1519,11 @@ fn unassigning_a_deposit_caravan_mid_walk_walks_every_pack_home_as_material() {
     // The load goes home only with a hand at the source to carry it — so the fixture needs one,
     // and the hands an unassign leaves there must walk home with it, not vanish into the pool.
     assert!(
-        party.hunters_present() > 0 && party.load_cargo > 0.0,
+        party.hunters_present() > 0 && party.load_cargo() > 0.0,
         "fixture: hands at the source with a load"
     );
-    let carried: f32 = party.load_cargo + party.on_the_road.iter().map(|w| w.cargo).sum::<f32>();
+    let carried: f32 =
+        party.load_cargo() + party.on_the_road.iter().map(|w| w.cargo()).sum::<f32>();
     assert!(carried > 0.0, "fixture: the caravan is carrying something");
     let wood_before = wood_held(&app, band);
     let larder_before = larder(&app, band);
@@ -3059,7 +3076,7 @@ fn a_rejoining_hand_landing_on_a_re_posted_party_walks_back_out_the_whole_walk()
             let returning = party
                 .on_the_road
                 .iter()
-                .filter(|walker| walker.cargo == 0.0 && walker.turns_out >= walker.walk_turns)
+                .filter(|walker| walker.cargo() == 0.0 && walker.turns_out >= walker.walk_turns)
                 .count() as u32;
             assert!(
                 returning >= rejoining_then - rejoining_now,
@@ -3174,7 +3191,7 @@ fn a_slow_stone_dig_is_conserved_and_lands_only_when_a_pack_fills() {
             .material_total(STONE)
             .to_f32();
         let party = extract_party(&app, band).expect("a seam past the apron posts a party");
-        let carried = party.load_cargo + party.on_the_road.iter().map(|w| w.cargo).sum::<f32>();
+        let carried = party.load_cargo() + party.on_the_road.iter().map(|w| w.cargo()).sum::<f32>();
         let removed = capacity - stock_of(&app);
         assert!(
             (removed - (held + carried)).abs() < 1e-2,
@@ -3199,7 +3216,7 @@ fn a_slow_stone_dig_is_conserved_and_lands_only_when_a_pack_fills() {
                 "turn {turn}: nothing has landed, so the row publishes no yield"
             );
             assert!(
-                (load_units - party.load_cargo).abs() < 1e-3,
+                (load_units - party.load_cargo()).abs() < 1e-3,
                 "turn {turn}: the wire states the load"
             );
             if turn > 0 && party.on_the_road.is_empty() {
@@ -4130,7 +4147,9 @@ fn the_forecast_is_the_walks_rot_alone_whatever_the_band_eats() {
 /// rate at walks 1 to 4 (hexes 3 to 6), for a band that eats the pack in time and one that cannot.
 #[test]
 fn the_forecast_keeps_only_the_meals_left_after_the_walk() {
-    const TURNS: usize = 20;
+    // The forecast averages a 40-turn horizon; the live drive runs as long, so the walk out and the
+    // first landing (which early departure makes a larger share of a short run) do not skew it.
+    const TURNS: usize = 40;
     const TOLERANCE: f32 = 0.25;
     /// Hands in the band's pool beyond the crew: a band this big eats every pack in its few turns.
     const BIG_BAND: f32 = 600.0;

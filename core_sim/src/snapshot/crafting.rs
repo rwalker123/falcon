@@ -294,6 +294,7 @@ impl EquippedElsewhere {
             EquipmentStat::Attack
             | EquipmentStat::HuntCarry
             | EquipmentStat::ForageCarry
+            | EquipmentStat::ForageHold
             | EquipmentStat::BuildWork
             | EquipmentStat::DepositTake
             | EquipmentStat::Dispersion

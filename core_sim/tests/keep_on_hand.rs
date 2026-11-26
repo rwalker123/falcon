@@ -462,7 +462,7 @@ fn a_row_with_cargo_walking_home_does_not_go_until_the_cargo_lands() {
             turns_left: 2,
             walk_turns: 2,
             cargo: 5.0,
-            classes: Default::default(),
+            aged: Default::default(),
             goods: Default::default(),
             rejoins_row: false,
         });
@@ -656,7 +656,7 @@ fn a_pinned_hand_row_survives_a_takeover_until_its_cargo_lands() {
             turns_left: 2,
             walk_turns: 2,
             cargo: 5.0,
-            classes: Default::default(),
+            aged: Default::default(),
             goods: Default::default(),
             rejoins_row: false,
         });
@@ -856,7 +856,7 @@ fn the_stand_list_shrinks_when_the_want_falls_and_a_pinned_row_stays() {
             turns_left: 2,
             walk_turns: 2,
             cargo: 5.0,
-            classes: Default::default(),
+            aged: Default::default(),
             goods: Default::default(),
             rejoins_row: false,
         });

@@ -108,6 +108,13 @@ pub enum EquipmentStat {
     /// item's TIER**; `labor_config.json`'s `forage.per_worker_biomass_capacity` is the
     /// **no-equipment baseline** a bare-handed gatherer carries.
     ForageCarry,
+    /// **What one gatherer's container HOLDS**, in biomass - the gather pack a far forage party's
+    /// porter walks home. A hold capacity is a fact about the container and is separate from
+    /// [`Self::ForageCarry`], the per-turn picking rate: a faster hand fills the basket sooner and
+    /// does not make it bigger. Declared **equipped, on the item's TIER** (the basket's `plain` tier
+    /// buys the equipped value); `labor_config.json`'s `forage.hold_per_worker_biomass_capacity` is
+    /// the **no-equipment baseline** a bare-handed gatherer holds.
+    ForageHold,
     /// **Multiplies the quarry's own `wariness`** — `effective_wariness = clamp(wariness × dispersion,
     /// 0, 1)`. Neutral at `1.0`; a trap ships `0.0`. A multiplier rather than a subtraction so the
     /// *species* decides how much a noisy approach costs, which is what lets one spear line scatter a
@@ -270,6 +277,7 @@ impl EquipmentStat {
             Self::Attack => "attack",
             Self::HuntCarry => "haul",
             Self::ForageCarry => "carry",
+            Self::ForageHold => "hold",
             Self::BuildWork => "build work",
             Self::DepositTake => "take",
             Self::ScoutVantageRange => "tile vantage",
@@ -326,6 +334,7 @@ impl EquipmentStat {
             EquipmentStat::Attack
             | EquipmentStat::HuntCarry
             | EquipmentStat::ForageCarry
+            | EquipmentStat::ForageHold
             | EquipmentStat::ScoutVantageRange
             | EquipmentStat::ExpeditionSightRange
             | EquipmentStat::CraftSpeed
@@ -351,9 +360,10 @@ impl EquipmentStat {
     /// at-most-one-item-per-stat rule permits and this list requires: a posted vantage and a ranging
     /// party are different observers with different bare readings
     /// ([`EquipmentStat::ExpeditionSightRange`]).
-    pub const TWO_TIER: [EquipmentStat; 4] = [
+    pub const TWO_TIER: [EquipmentStat; 5] = [
         EquipmentStat::HuntCarry,
         EquipmentStat::ForageCarry,
+        EquipmentStat::ForageHold,
         EquipmentStat::ScoutVantageRange,
         EquipmentStat::ExpeditionSightRange,
     ];
@@ -3198,6 +3208,21 @@ impl EquipmentConfig {
         wear: &crate::components::BandEquipment,
     ) -> f32 {
         self.rate_tier(EquipmentStat::ForageCarry, baseline_rate, kit, wear)
+    }
+
+    /// **A band's per-worker GATHER HOLD** - what one gatherer's container holds, in biomass: the
+    /// gather pack a far party's porter walks home. Resolved against the **no-equipment baseline**
+    /// the caller holds (`labor_config.forage.hold_per_worker_biomass_capacity`), the basket's own
+    /// tier supplying the equipped hold. **Separate from
+    /// [`Self::forage_per_worker_biomass_capacity`]**, the per-turn picking rate: a faster hand fills
+    /// the container sooner and does not change what it holds.
+    pub fn forage_hold_per_worker_biomass(
+        &self,
+        baseline_hold: f32,
+        kit: &KitChoice,
+        wear: &crate::components::BandEquipment,
+    ) -> f32 {
+        self.rate_tier(EquipmentStat::ForageHold, baseline_hold, kit, wear)
     }
 
     /// **HOW MANY WORKERS THIS KIT CAN ACTUALLY EQUIP FOR A CARRY, out of what the band holds** —

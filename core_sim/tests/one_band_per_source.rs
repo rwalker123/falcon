@@ -305,7 +305,7 @@ fn a_pinned_duplicate_stays_until_it_is_unpinned_then_retires() {
             turns_left: 2,
             walk_turns: 2,
             cargo: 5.0,
-            classes: Default::default(),
+            aged: Default::default(),
             goods: Default::default(),
             rejoins_row: false,
         });
