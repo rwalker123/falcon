@@ -2325,6 +2325,15 @@ impl EquipmentConfig {
         &self.kits
     }
 
+    /// **The kit a bench order can be placed for**: it exists and carries something. The shipped
+    /// `none` kit uses nothing, so there is nothing to make for it. The one predicate the
+    /// `bench_enqueue_kit` handler and the scenario loader's name check both ask.
+    pub fn orderable_kit(&self, kit_id: &str) -> Option<&KitDefinition> {
+        self.kits
+            .iter()
+            .find(|kit| kit.id == kit_id && !kit.uses.is_empty())
+    }
+
     /// **Every kit this verb may be sent on, resolved, in file order.** The candidate set a
     /// per-quarry default is scored over, and the same `jobs` test
     /// [`Self::resolve_kit_for_job`] refuses a bad selection with — so a kit the command boundary

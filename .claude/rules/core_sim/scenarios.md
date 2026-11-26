@@ -20,7 +20,7 @@ rule of the arc that owns it**, under `## Scenario section`. The bands section's
 `campaign.md`, the labor section's is in `work-party.md`, the tiles section's is in `worldgen.md`,
 the rungs section's is in `intensification.md`, the herds section's is in `fauna.md`, the pens
 section's is in `husbandry.md`, the deposits section's is in `extraction.md`, the roads
-section's is in `routes.md`.
+section's is in `routes.md`, the bench section's is in `crafting.md`.
 
 ## Where things are
 
@@ -28,7 +28,7 @@ section's is in `routes.md`.
 |---|---|
 | File shape, pass 1, `ScenarioRefusal`, `build_scenario_world`, `finish_scenario` | `core_sim/src/scenario/mod.rs` |
 | The profile and roster steps every world build runs (`apply_start_profile`, `seed_faction_roster`) | `core_sim/src/world_roster.rs` |
-| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs`, `pens.rs`, `deposits.rs`, `roads.rs` |
+| One module per section | `core_sim/src/scenario/bands.rs`, `labor.rs`, `tiles.rs`, `rungs.rs`, `herds.rs`, `pens.rs`, `deposits.rs`, `roads.rs`, `bench.rs` |
 | Replayed verbs that **return** their refusal | `core_sim/src/command_seam.rs` (the labor verbs' bodies are in `labor_commands.rs`) |
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched): `breeding_ceiling_150.json`, `kept_roads.json` and the `*_playtest.json` files |
@@ -40,7 +40,8 @@ section's is in `routes.md`.
    `deny_unknown_fields`, there are no serde defaults, and a key is optional only where the
    command it replays has an `Option` (a band's `outfit` and `auto_craft`; a labor entry's target,
    kit, species, floor; a tile's `terrain` and `flora`, of which one is required; a road's
-   `keeper`, which a trail has none of). Names are checked against the live
+   `keeper`, which a trail has none of). Every section key is required (`[]` for none). Names are
+   checked against the live
    app's config handles (presets, profiles, archetypes, knowledge tags, keeping classes, kits,
    materials, labor roles, terrains, the flora roster). **Every refusal is collected**, so one load lists all of a
    file's faults. A serde error has no field path, so it reports `line L, column C`.
@@ -110,6 +111,10 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   `command_seam::apply_extend_pen` / `apply_set_herd_output`, after the builds (plan §2.8). A herd is
   named by its scenario id in every section, mapped through `ScenarioApplied.herds`. A refused entry
   stops the load at that entry.
+- `finish_scenario` then replays every faction's `bench` entries, in file order, through
+  `command_seam::apply_bench_enqueue` / `apply_bench_enqueue_kit`, after the
+  pens (plan §2.8: outfit, labor, builds, pens, bench, splits). A refused entry stops the load at
+  `factions[i].bench[k]`.
 - `ScenarioSetup` is removed in `finish_scenario`. It is never part of `SimState`, a save or a
   snapshot.
 
@@ -124,6 +129,15 @@ handler. `BuildRung` lives there whole (`apply_build_rung`, every source kind, w
 `queue_build_on_working_bands` and the pen helpers), and its refusal carries the feed channel the
 server writes the failure on. The yield re-quote those verbs need lives in `core_sim/src/yield_seed.rs` for the same
 reason.
+
+**The two bench queue verbs** (`apply_bench_enqueue`, `apply_bench_enqueue_kit`) return an
+outcome struct carrying what the server's success feed line names (display name, queue position,
+crew, kit order id), so the server writes the same line it always did. Each has a
+`BandId` form (the scenario path, resolved through `resolve_band`, refused `NoSuchBand` rather than
+panicking) and an `_on` form taking the `Entity` that holds the body (the server path, after its own
+`select_starting_band`). A bench refusal is `CommandRefusal::Bench(String)`, the handler's sentence
+verbatim. The server now resolves the band **before** it judges the recipe, kit or count, so a
+command with both a bad band and a bad recipe reports the band.
 
 ## Not replayable, and dev-only
 

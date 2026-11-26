@@ -20,6 +20,7 @@
           "take_species": [], "move_with_herd": false } }
       ],
       "pens": [],
+      "bench": [],
       "bands": [
         {
           "id": "home",

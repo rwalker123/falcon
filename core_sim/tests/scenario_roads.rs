@@ -341,7 +341,7 @@ fn a_keeper_of_another_faction_is_refused() {
         json!([road_json(tile, "dirt_road", Some("other"))]),
     );
     file["factions"].as_array_mut().unwrap().push(json!({
-        "faction": 1, "knowledge": [], "rungs": [], "labor": [], "pens": [], "roads": [],
+        "faction": 1, "knowledge": [], "rungs": [], "labor": [], "pens": [], "roads": [], "bench": [],
         "bands": [{
             "id": "other", "at": [40, 20], "size": 10,
             "ages": { "children": 0.3, "working": 0.6, "elders": 0.1 },
@@ -357,7 +357,7 @@ fn a_duplicate_tile_across_factions_is_refused() {
     let tile = land_by_distance()[0].0;
     let mut file = scenario(&[], json!([road_json(tile, "trail", None)]));
     file["factions"].as_array_mut().unwrap().push(json!({
-        "faction": 1, "knowledge": [], "rungs": [], "labor": [], "pens": [],
+        "faction": 1, "knowledge": [], "rungs": [], "labor": [], "pens": [], "bench": [],
         "bands": [{
             "id": "other", "at": [40, 20], "size": 10,
             "ages": { "children": 0.3, "working": 0.6, "elders": 0.1 },

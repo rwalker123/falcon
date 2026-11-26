@@ -15,6 +15,7 @@
 //! touch two files.
 
 pub mod bands;
+pub mod bench;
 pub mod deposits;
 pub mod herds;
 pub mod labor;
@@ -34,6 +35,7 @@ pub use bands::{
     Ages, BandEntry, FactionSection, FactionSetup, LarderEntry, Outfit, ScenarioSetup,
     AGES_SUM_TOLERANCE,
 };
+pub use bench::BenchEntry;
 pub use deposits::DepositEntry;
 pub use herds::{HerdEntry, HerdOrigin, ScenarioHerdSetup};
 pub use labor::LaborEntry;
@@ -54,6 +56,7 @@ use crate::intensification::{LadderConfig, LadderConfigHandle};
 use crate::labor_commands::BuildSourceRef;
 use crate::map_preset::{MapPresets, MapPresetsHandle};
 use crate::materials_config::{MaterialsConfig, MaterialsConfigHandle};
+use crate::recipes_config::{RecipesConfig, RecipesConfigHandle};
 use crate::resources::SimulationConfig;
 use crate::run_turn;
 use crate::start_profile::{
@@ -128,6 +131,7 @@ pub struct ScenarioContext {
     pub demographics: Arc<DemographicsConfig>,
     pub equipment: Arc<EquipmentConfig>,
     pub materials: Arc<MaterialsConfig>,
+    pub recipes: Arc<RecipesConfig>,
     pub ladder: Arc<LadderConfig>,
     pub flora: Arc<FloraConfig>,
     pub extraction: Arc<ExtractionConfig>,
@@ -144,6 +148,7 @@ impl ScenarioContext {
             demographics: world.resource::<DemographicsConfigHandle>().get(),
             equipment: world.resource::<EquipmentConfigHandle>().get(),
             materials: world.resource::<MaterialsConfigHandle>().get(),
+            recipes: world.resource::<RecipesConfigHandle>().get(),
             ladder: world.resource::<LadderConfigHandle>().get(),
             flora: world.resource::<FloraConfigHandle>().get(),
             extraction: world.resource::<ExtractionConfigHandle>().get(),
@@ -241,6 +246,7 @@ pub fn parse_scenario(
         }
     }
     bands::check(&file.factions, ctx, &mut refusals);
+    bench::check(&file.factions, ctx, &mut refusals);
     rungs::check(&file.factions, &file.herds, ctx, &mut refusals);
     labor::check(&file.factions, &file.herds, &file.world, ctx, &mut refusals);
     pens::check(&file.factions, &file.herds, &mut refusals);
@@ -503,6 +509,12 @@ pub fn finish_scenario(
         if !refusals.is_empty() {
             return Err(refusals);
         }
+    }
+    // **Bench after pens** (plan section 2.8 step 6: outfit, labor, builds, pens, bench, splits). A
+    // refused entry stops the load there, with the verb's own reason.
+    if let Err(refusal) = bench::apply(world, &setup) {
+        refusals.push(refusal);
+        return Err(refusals);
     }
     Ok(ScenarioApplied {
         bands: setup.spawned,
