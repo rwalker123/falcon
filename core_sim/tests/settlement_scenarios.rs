@@ -99,7 +99,7 @@ fn turns_until_tribe_is(app: &mut App, target: &str, cap: u32) -> Option<u32> {
 #[test]
 fn the_town_scenario_opens_a_village_tribe_and_becomes_a_town_when_the_pit_is_dug() {
     let mut app = load(TOWN);
-    assert_eq!(members(&app), 6, "the tribe stands at load");
+    assert_eq!(members(&app), 3, "the tribe stands at load");
     assert_eq!(tribe_stage(&app).as_deref(), Some("village"));
     assert_eq!(held_store(&app), Some("food_stores:unstored".to_string()));
     // The `tiles[].belief` setter lands through the registry's one add seam.
@@ -123,7 +123,7 @@ fn the_town_scenario_opens_a_village_tribe_and_becomes_a_town_when_the_pit_is_du
 #[test]
 fn the_city_scenario_opens_a_town_tribe_and_becomes_a_city_when_the_granary_is_built() {
     let mut app = load(CITY);
-    assert_eq!(members(&app), 13, "the tribe stands at load");
+    assert_eq!(members(&app), 10, "the tribe stands at load");
     assert!(
         people(&mut app) >= 1_000,
         "the people already number a city"
@@ -211,10 +211,20 @@ fn a_tribe_the_game_could_never_form_is_refused_with_a_path() {
         "{two_tribes:?}"
     );
 
-    // No chief among the members: the builder bands are chiefless.
-    let chiefless = refusal_paths(&town_with_tribes(
-        json!([{ "bands": ["diggers_a", "diggers_b"] }]),
-    ));
+    // No chief among the members: two small bands added with no `leader` key are chiefless.
+    let mut file: Value = serde_json::from_str(TOWN).unwrap();
+    for (id, at) in [("stragglers_a", [13, 8]), ("stragglers_b", [10, 11])] {
+        file["factions"][0]["bands"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": id, "at": at, "size": 40,
+                "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 },
+                "founding_lines": 8, "larder": [{ "class": "dry", "amount": 150.0 }]
+            }));
+    }
+    file["factions"][0]["tribes"] = json!([{ "bands": ["stragglers_a", "stragglers_b"] }]);
+    let chiefless = refusal_paths(&file.to_string());
     assert!(
         chiefless.contains(&"factions[0].tribes[0]".to_string()),
         "{chiefless:?}"
@@ -226,11 +236,11 @@ fn a_loaded_tribe_survives_the_turns_and_a_member_is_a_band() {
     let mut app = load(TOWN);
     let mut query = app.world.query::<&BandId>();
     let bands = query.iter(&app.world).count();
-    assert_eq!(bands, 6);
+    assert_eq!(bands, 3);
     for _ in 0..TOWN_CROSSING_CAP {
         run_turn(&mut app);
     }
-    assert_eq!(members(&app), 6, "no member left the tribe");
+    assert_eq!(members(&app), 3, "no member left the tribe");
 }
 
 fn city_with_progress(progress: Value) -> Vec<String> {
