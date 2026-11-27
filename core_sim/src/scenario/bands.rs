@@ -671,7 +671,7 @@ fn over_carry(
     allocation_load(&equipment, &carry_cfg, kits, materials) > capacity
 }
 
-/// One band's entry. `first` is the faction's lowest band, the only one that takes an outfit.
+/// One band's entry: its position, size, ages, larder, outfit, and `leader: true` / `auto_craft: true` where it has them. Every band carries its own outfit.
 fn export_band(
     world: &World,
     faction: FactionId,
@@ -843,7 +843,7 @@ pub(super) fn export(
 }
 
 /// **What no section owns**: parties in the field, pending dealings, treaties, goodwill, the
-/// improvements a tile or a band holds, and the people who lead a band. One line each, counted.
+/// improvements a tile or a band holds. One line each, counted (a leader is written as the band's `leader: true`, not noted).
 pub(super) fn export_unexpressed(world: &World, notes: &mut Vec<String>) {
     let mut parties: BTreeMap<FactionId, usize> = BTreeMap::new();
     for entity in world.iter_entities() {

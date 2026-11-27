@@ -18,16 +18,18 @@ use serde::{Deserialize, Serialize};
 use super::bands::FactionSection;
 use super::herds::HerdEntry;
 use super::rungs::refuse_undeclared_herd;
-use bevy::prelude::World;
+use bevy::prelude::{UVec2, World};
 
 use super::{
     round_export, ExportIds, ExportedBand, ScenarioContext, ScenarioRefusal, WorldSection,
 };
 use crate::components::{
-    LaborAllocation, LaborAssignment, LaborTarget, OrderOwner, SourcePriority,
+    LaborAllocation, LaborAssignment, LaborTarget, OrderOwner, SourcePriority, TakeSelection,
+    DEFAULT_ESCAPEMENT_FLOOR,
 };
 use crate::labor_commands::{parse_work_priority_level, LaborRole};
 use crate::orders::FactionId;
+use crate::source_holders::{take_source_key, ScenarioLaborReservations};
 
 /// A staffed row's `workers` when the player set no Max: the sim staffs the row.
 const NO_MAX_WORKERS: u32 = 0;
@@ -62,9 +64,11 @@ pub struct BandOrderEntry {
     pub action: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_x: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_y: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herd_id: Option<String>,
@@ -80,12 +84,15 @@ pub struct AssignLaborEntry {
     pub workers: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_x: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_y: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fauna_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub species: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub floor: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kit_id: Option<String>,
     pub take_species: Vec<String>,
     pub move_with_herd: bool,
@@ -99,9 +106,11 @@ pub struct WorkPriorityEntry {
     pub band: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_x: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_y: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herd_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
@@ -152,6 +161,65 @@ pub(super) fn with_runtime_herd(
             ..order.clone()
         }),
     })
+}
+
+/// **The take sources the file's own labor rows name, band by band** - what a chief's managing pass
+/// must leave alone while the replay runs ([`ScenarioLaborReservations`]). A forage row names its
+/// tile, a hunt row its herd (the runtime id `herds` maps the file's id to), an extract row its tile
+/// and material; any other row is no take source.
+pub(super) fn reservations(
+    setup: &super::bands::ScenarioSetup,
+    herds: &BTreeMap<String, String>,
+) -> ScenarioLaborReservations {
+    let mut reserved = ScenarioLaborReservations::default();
+    for faction_setup in &setup.factions {
+        for entry in &faction_setup.labor {
+            let LaborEntry::AssignLabor(row) = entry else {
+                continue;
+            };
+            let Some(band) = setup.spawned.get(&row.band) else {
+                continue;
+            };
+            let tile = row
+                .target_x
+                .zip(row.target_y)
+                .map(|(x, y)| UVec2::new(x, y));
+            let target = match (LaborRole::from_token(&row.role), tile) {
+                (Some(LaborRole::Forage), Some(tile)) => LaborTarget::Forage {
+                    tile,
+                    floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    species: None,
+                    take_species: TakeSelection::EVERYTHING,
+                },
+                (Some(LaborRole::Hunt), _) => {
+                    let Some(runtime_id) = row.fauna_id.as_ref().and_then(|id| herds.get(id))
+                    else {
+                        continue;
+                    };
+                    LaborTarget::Hunt {
+                        fauna_id: runtime_id.clone(),
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                        move_with_herd: false,
+                    }
+                }
+                (Some(LaborRole::Extract), Some(tile)) => {
+                    let Some(material) = row.species.clone() else {
+                        continue;
+                    };
+                    LaborTarget::Extract {
+                        tile,
+                        material,
+                        floor: DEFAULT_ESCAPEMENT_FLOOR,
+                    }
+                }
+                _ => continue,
+            };
+            if let Some(key) = take_source_key(&target) {
+                reserved.reserve(key, *band, faction_setup.faction);
+            }
+        }
+    }
+    reserved
 }
 
 /// Pass 1 for every faction's `labor` entries.
@@ -227,9 +295,12 @@ pub(super) fn check(
 /// `assign_labor`, then a `work_priority` for each row ranked off Normal.
 ///
 /// A staffed row's count is the player's Max (`0` is no Max, the sim staffs it), a scouting row's is its
-/// range in tiles, and any other row's is its crew. A band's chief orders are noted, not written:
-/// `band_order` needs a leader, which the band's `leader` key gives it on load; the rows a leader lists
-/// are the leader's to place and are left out with it.
+/// range in tiles, and any other row's is its crew. A band's chief orders are written as `band_order`
+/// entries (a `set` per order, and a whole-kind or one-row `release` where the player crews it), ahead
+/// of that band's `assign_labor` rows; `band_order` needs a leader, which the band's `leader: true` key
+/// gives it on load. The rows a leader lists are the leader's to place: they are not written, and a
+/// note counts them. The unled bands' rows come first, then each led band's whole sequence, in `BandId`
+/// order.
 pub(super) fn export(
     world: &World,
     faction: FactionId,

@@ -8,6 +8,7 @@ paths:
   - "core_sim/tests/scenario_labor_tiles.rs"
   - "core_sim/tests/scenario_export.rs"
   - "core_sim/src/labor_commands.rs"
+  - "core_sim/src/source_holders.rs"
   - "xtask/src/main.rs"
   - "scripts/run_stack.sh"
 ---
@@ -108,8 +109,17 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
 - **`finish_scenario` then gives each `leader: true` band its leader** (`bands::apply_leaders`, through the
   `BandLeadership::appoint` body emergence runs; `leadership.md` → "Scenario section") **after the outfit and
   auto-craft replays and immediately before labor**: each of those restaffs its band, and a led band's
-  restaff runs its chief's managing pass. A `band_order` entry needs the leader, and the export orders the
-  labor list so no chief's pass runs before the other bands' rows exist (`work-party.md` → Export).
+  restaff runs its chief's managing pass. A `band_order` entry needs the leader.
+- **A chief's pass during the load leaves every source the file's labor rows name alone.** Just
+  before `apply_leaders`, `finish_scenario` inserts `ScenarioLaborReservations`
+  (`source_holders.rs`): each forage, hunt and extract `assign_labor` row's source → its band and
+  faction (a hunt by runtime herd id). Only the chief's managing passes read it, through
+  `SourceHolders::with_reservations` where `staffing.rs` builds their holders, and a reservation
+  counts as a player row of the reserving band. So appointing a chief, or any restaff before a
+  later band's row is replayed, cannot list that row's source and get the row refused "X already
+  hunts the Y.", whatever order the rows come in and however many bands are led. The resource is
+  removed when the labor replay ends, on every exit, so play never sees it. The export still writes
+  unled bands' rows first (`work-party.md` → Export).
 - **Every band that states an `outfit` has a window to state it in.** The game opens one Grant window
   per faction, on its lowest band. Before the outfit replay `finish_scenario` opens a window of the
   same kind (`LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget: None })`: the band's own carry,
@@ -207,7 +217,18 @@ constant), so an exported value is already at the precision the file holds it at
 **Ids are positional.** A band is `f<faction>_band<n>`, `n` its index among that faction's bands in
 ascending `BandId` order (a reload spawns in file order, so the lowest id comes back first and holds the
 opening outfit window). A herd is `herd<n>` in the export order: worldgen herds by runtime id, then every
-other herd by `(species key, y, x, id)`. Every section that names a band or a herd uses these ids.
+other herd by `(species key, y, x, id)`. A worldgen herd that has died out keeps its slot as a
+`gone` entry, so the ids after it do not shift. Every section that names a band or a herd uses these ids.
+
+**A worldgen herd that died out stays dead.** The loader leaves a worldgen herd the file does not name
+as worldgen made it, so the export names the dead ones. `spawn_initial_herds` records each herd it
+spawns in `WorldgenHerdRoster` (`fauna.rs`: id, species, spawn tile; not part of `SimState`). The
+export writes `{"origin": "worldgen", "at": <spawn tile>, "stock": 1.0, "gone": true}` for every
+roster herd no longer in the registry, and for a worldgen herd at zero stock. The loader despawns
+the matched herd. A herd the build turn already dispersed is accepted, because the roster still
+names it. Pass 1 refuses `gone` on a placed herd, `gone` with a stock other than 1.0, and
+`gone: false`. A world restored from a save has no roster: the export notes that a dead worldgen
+herd will respawn on reload.
 
 **What a section writes.** The per-arc tables (`campaign.md`, `work-party.md`, ...) carry each
 section's export line. Out of every section: a faction with no band, or one the world gained after it
@@ -226,6 +247,6 @@ herd that wandered, a party out), so a reload, which has not lived, has less to 
 the herd fit matches the spawn tile first, else the tile the herd stands on after the build turn; a
 `game_` immigrant past the build turn is written as `placed`. A placed herd whose current tile fails
 the placement predicate is written at the nearest tile that passes (hex distance, then `(y, x)`) with a
-note. An outfit lists only the materials the human archetype's pick list names; any other material the
-first band holds is noted. Every band's gear is written as its own `outfit`. A held rung is replayed through the build gate, so a faction must know the
+note. An outfit lists only the materials the human archetype's pick list names; any other material a
+band holds is noted. Every band's gear is written as its own `outfit`. A held rung is replayed through the build gate, so a faction must know the
 lesson it needs, which only `knowledge` tags the start profile names can say.

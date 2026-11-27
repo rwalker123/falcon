@@ -2099,4 +2099,4 @@ hold that row from the first turn, so a herd beside the band needs no `assign_la
 
 The loader, the apply order and the refusal contract are `scenarios.md`.
 
-**Export** writes an `extend_pen` for a pen ring in flight and a `set_herd_output` at its target share for a commitment in flight. A finished ring count and a standing output share have no key and are noted.
+**Export** writes an `extend_pen` for a pen ring in flight and a `set_herd_output` at its target share for a commitment in flight. A finished ring count and a standing output share have no key and are noted, as is a job on a herd the export leaves out.

@@ -429,7 +429,8 @@ fn a_chief_is_replayed_after_the_other_bands_rows_it_would_otherwise_claim() {
             .all(|entry| band_of(entry) == "f0_band1"),
         "every unled band's rows come before the first chief order"
     );
-    // The control: the same entries chief-first are refused, so the ordering is what the test proves.
+    // The file's own rows are reserved while the chiefs are replayed, so the same entries written
+    // chief-first load too: the ordering the export writes is no longer the only thing that holds.
     let mut reversed = a.clone();
     reversed["factions"][0]["labor"]
         .as_array_mut()
@@ -441,11 +442,203 @@ fn a_chief_is_replayed_after_the_other_bands_rows_it_would_otherwise_claim() {
         &ScenarioContext::from_world(&app.world),
     )
     .expect("pass 1");
-    let refusals = build_scenario_world(&mut app, &plan).expect_err("chief first is refused");
-    assert!(
-        refusals
+    build_scenario_world(&mut app, &plan)
+        .unwrap_or_else(|refusals| panic!("chief-first no longer refuses: {refusals:?}"));
+}
+
+/// Every `null` in `value`, as a JSON pointer.
+fn nulls_in(value: &Value, at: &str, found: &mut Vec<String>) {
+    match value {
+        Value::Null => found.push(at.to_string()),
+        Value::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                nulls_in(item, &format!("{at}/{i}"), found);
+            }
+        }
+        Value::Object(map) => {
+            for (key, item) in map {
+                nulls_in(item, &format!("{at}/{key}"), found);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn an_export_of_every_checked_in_scenario_holds_no_null() {
+    for (name, text) in [
+        ("breeding", BREEDING.to_string()),
+        ("bench", BENCH.to_string()),
+        ("deposits", DEPOSITS.to_string()),
+        ("held_rungs", HELD_RUNGS.to_string()),
+        ("herds_pens", HERDS_PENS.to_string()),
+        ("roads", ROADS.to_string()),
+        ("led_band_beside_a_hunter", led_band_beside_a_hunter()),
+    ] {
+        let mut live = loaded(&text, TURNS_BEFORE_EXPORT);
+        let (_, value, _) = export_of(&mut live);
+        let mut found = Vec::new();
+        nulls_in(&value, "", &mut found);
+        assert!(
+            found.is_empty(),
+            "{name}: the export writes null at {found:?}"
+        );
+    }
+}
+
+#[test]
+fn a_worldgen_herd_that_died_out_stays_gone_across_export_and_reload() {
+    use core_sim::{HerdRegistry, WorldgenHerdRoster};
+    let mut live = loaded(BREEDING, 0);
+    let standing: Vec<_> = {
+        let registry = live.world.resource::<HerdRegistry>();
+        live.world
+            .resource::<WorldgenHerdRoster>()
+            .herds
             .iter()
-            .any(|refusal| format!("{refusal:?}").contains("already hunts")),
-        "refused for the held source: {refusals:?}"
+            .filter(|record| registry.find(&record.id).is_some())
+            .cloned()
+            .collect()
+    };
+    let record = standing
+        .iter()
+        .min_by(|a, b| a.id.cmp(&b.id))
+        .cloned()
+        .expect("worldgen made a herd that is still standing");
+    let before_gone = export_of(&mut live).1["herds"]
+        .as_array()
+        .expect("herds")
+        .iter()
+        .filter(|h| h.get("gone").is_some())
+        .count();
+    live.world
+        .resource_mut::<HerdRegistry>()
+        .herds
+        .retain(|herd| herd.id != record.id);
+    let (_, a, a_text) = export_of(&mut live);
+    let herds = a["herds"].as_array().expect("herds");
+    let gone: Vec<&Value> = herds
+        .iter()
+        .filter(|h| {
+            h.get("gone").is_some()
+                && h["at"] == serde_json::json!([record.spawn.x, record.spawn.y])
+        })
+        .collect();
+    assert_eq!(
+        gone.len(),
+        1,
+        "the dead herd is written as gone at its spawn tile"
+    );
+    assert_eq!(gone[0]["gone"], true);
+    assert_eq!(gone[0]["origin"], "worldgen");
+    let all_gone = herds.iter().filter(|h| h.get("gone").is_some()).count();
+    assert_eq!(
+        all_gone,
+        before_gone + 1,
+        "only the killed herd is added to the build turn's own casualties"
+    );
+    let mut reloaded = loaded(&a_text, 0);
+    assert!(
+        reloaded
+            .world
+            .resource::<HerdRegistry>()
+            .find(&record.id)
+            .is_none(),
+        "the reload does not spawn the dead herd again"
+    );
+    let (_, b, _) = export_of(&mut reloaded);
+    let without_note = |file: &Value| {
+        let mut file = file.clone();
+        file.as_object_mut().expect("object").remove("note");
+        file
+    };
+    assert_eq!(
+        without_note(&a),
+        without_note(&b),
+        "export -> load -> export drifted"
+    );
+}
+
+#[test]
+fn a_gone_entry_on_a_placed_herd_or_with_a_stock_is_refused() {
+    let live = loaded(BREEDING, 0);
+    let mut file: Value = serde_json::from_str(BREEDING).expect("JSON");
+    let herds = file["herds"].as_array_mut().expect("herds");
+    herds.push(serde_json::json!({
+        "id": "x", "species": "aurochs", "at": [0, 0], "stock": 1.0,
+        "origin": "placed", "gone": true
+    }));
+    herds.push(serde_json::json!({
+        "id": "y", "species": "aurochs", "at": [1, 0], "stock": 0.5,
+        "origin": "worldgen", "gone": true
+    }));
+    let refused = parse_scenario(&file.to_string(), &ScenarioContext::from_world(&live.world))
+        .expect_err("both entries are refused");
+    let text = format!("{refused:?}");
+    assert!(text.contains("only a worldgen herd can be gone"), "{text}");
+    assert!(text.contains("a gone herd has no stock to set"), "{text}");
+}
+
+/// Two led bands of one people: `home` (band 0) holds a leader and no rows, `other` holds a leader and
+/// a hunt row on every herd. The lower band's chief would list those herds if nothing reserved them.
+fn two_led_bands_one_hunting() -> String {
+    let mut file: Value = serde_json::from_str(&led_band_beside_a_hunter()).expect("JSON");
+    file["factions"][0]["bands"][1]["leader"] = serde_json::json!(true);
+    // Big enough to open the leader's orders, as the first band is.
+    file["factions"][0]["bands"][1]["size"] = serde_json::json!(150);
+    // The led band holds the food order, then hands the whole kind to the player, as the exporter
+    // writes a band whose player crews the kind; its rows follow.
+    let rows = file["factions"][0]["labor"].take();
+    let mut labor = vec![
+        // The lower band's chief is told to hold food on hand, so it lists every source nobody holds.
+        serde_json::json!({ "band_order": {
+            "band": "home", "kind": "food", "action": "set", "target": 8, "priority": "high"
+        }}),
+        serde_json::json!({ "band_order": {
+            "band": "other", "kind": "food", "action": "set", "target": 1, "priority": "normal"
+        }}),
+        serde_json::json!({ "band_order": {
+            "band": "other", "kind": "food", "action": "release"
+        }}),
+    ];
+    labor.extend(rows.as_array().expect("labor").iter().cloned());
+    file["factions"][0]["labor"] = Value::Array(labor);
+    file.to_string()
+}
+
+#[test]
+fn a_led_bands_chief_leaves_a_later_led_bands_row_alone() {
+    use core_sim::{BandId, LaborAllocation, LaborTarget};
+    let mut app = build_test_app();
+    let plan = parse_scenario(
+        &two_led_bands_one_hunting(),
+        &ScenarioContext::from_world(&app.world),
+    )
+    .expect("pass 1");
+    let applied = build_scenario_world(&mut app, &plan)
+        .unwrap_or_else(|refusals| panic!("the file does not load: {refusals:?}"));
+    let other = applied.bands["other"];
+    let hunted = app
+        .world
+        .query::<(&BandId, &LaborAllocation)>()
+        .iter(&app.world)
+        .find(|(id, _)| **id == other)
+        .map(|(_, allocation)| {
+            allocation
+                .assignments
+                .iter()
+                .filter(|row| matches!(row.target, LaborTarget::Hunt { .. }))
+                .count()
+        })
+        .expect("the band exists");
+    assert!(
+        hunted >= 4,
+        "the higher led band holds its own rows ({hunted})"
+    );
+    assert!(
+        app.world
+            .get_resource::<core_sim::source_holders::ScenarioLaborReservations>()
+            .is_none(),
+        "the reservation ends with the replay"
     );
 }

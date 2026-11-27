@@ -134,11 +134,14 @@ fn check_rung_and_keeper(
 /// **One faction's held roads.** A road a band of the faction keeps is filed under the faction with the
 /// keeper named by its scenario id; a trail nobody keeps is filed under `adopts_trails` (the lowest
 /// exported faction). Unworn ground (a road at its branch's root) is not a road and is left out, and
-/// a road whose keeper is not an exported band of the faction is noted. Ordered by `(y, x)`.
+/// a road whose keeper is not an exported band of the faction is noted. A road kept by a faction the
+/// file does not carry (not in `exported_factions`) is noted once, on the `adopts_trails` pass.
+/// Ordered by `(y, x)`.
 pub(super) fn export(
     world: &World,
     faction: FactionId,
     adopts_trails: bool,
+    exported_factions: &BTreeSet<FactionId>,
     ids: &ExportIds,
     notes: &mut Vec<String>,
 ) -> Vec<RoadEntry> {
@@ -165,7 +168,16 @@ pub(super) fn export(
                     continue;
                 }
             },
-            Some(_) => continue,
+            Some(keeper) => {
+                if adopts_trails && !exported_factions.contains(&keeper.faction) {
+                    notes.push(format!(
+                        "the road at ({},{}) is kept by band {} of faction {}, which is not exported, \
+                         and is left out",
+                        tile.x, tile.y, keeper.band.0, keeper.faction.0
+                    ));
+                }
+                continue;
+            }
             None if adopts_trails => None,
             None => continue,
         };

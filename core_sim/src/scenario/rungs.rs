@@ -85,9 +85,11 @@ pub struct BuildRungEntry {
     pub verb: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_x: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_y: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herd_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
@@ -766,7 +768,13 @@ pub(super) fn export_builds_and_pens(
                         }
                         BuildSource::Band { band: held_by, .. } => match ids.band(*held_by) {
                             Some(scenario_id) => entry.band = Some(scenario_id.to_string()),
-                            None => continue,
+                            None => {
+                                notes.push(format!(
+                                    "a build declared on band {}, which is not exported, is left out",
+                                    held_by.0
+                                ));
+                                continue;
+                            }
                         },
                     }
                     builds.push(RungEntry::BuildRung(entry));
@@ -776,6 +784,9 @@ pub(super) fn export_builds_and_pens(
                         continue;
                     };
                     let Some(scenario_id) = ids.herd(id) else {
+                        notes.push(format!(
+                            "a pen build declared on herd {id}, which is not exported, is left out"
+                        ));
                         continue;
                     };
                     if declaration.declared == BuildJob::ExtendPen {
