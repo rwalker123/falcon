@@ -1,0 +1,951 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The scenario file.",
+  "properties": {
+    "deposits": {
+      "description": "World state, not a faction's: a deposit has no owner.",
+      "items": {
+        "additionalProperties": false,
+        "description": "One working's remaining stock.",
+        "properties": {
+          "at": {
+            "description": "The tile the working stands on, `[x, y]`.",
+            "items": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array",
+            "x-pick": "tile"
+          },
+          "material": {
+            "description": "An `extraction.json` deposit id.",
+            "type": "string"
+          },
+          "stock": {
+            "description": "The standing stock, in the material's own units. Within `0..=` the tile's capacity.",
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "at",
+          "material",
+          "stock"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "factions": {
+      "items": {
+        "additionalProperties": false,
+        "description": "One faction's section.",
+        "properties": {
+          "bands": {
+            "description": "The faction's bands, in spawn order. The FIRST holds the faction's opening outfit window.",
+            "items": {
+              "additionalProperties": false,
+              "description": "One band.",
+              "properties": {
+                "ages": {
+                  "additionalProperties": false,
+                  "description": "The shares of a band in each age bracket.",
+                  "properties": {
+                    "children": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "elders": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "working": {
+                      "format": "float",
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "children",
+                    "working",
+                    "elders"
+                  ],
+                  "type": "object"
+                },
+                "at": {
+                  "description": "The tile the band stands on, `[x, y]`. Used exactly: no offset, no nearest-land search.",
+                  "items": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "type": "array",
+                  "x-pick": "tile"
+                },
+                "auto_craft": {
+                  "description": "Absent leaves the band's bench auto-craft off, `true` switches it\non after the outfit, as the server's `set_auto_craft` does.",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "founding_lines": {
+                  "description": "`L`: the founding lines the band is founded with.",
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "id": {
+                  "description": "The band's id inside this file. Every later entry names its band by it.",
+                  "type": "string"
+                },
+                "larder": {
+                  "description": "The larder, exactly: an empty list is an empty larder.",
+                  "items": {
+                    "additionalProperties": false,
+                    "description": "Food of one keeping class.",
+                    "properties": {
+                      "amount": {
+                        "format": "float",
+                        "type": "number"
+                      },
+                      "class": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "class",
+                      "amount"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "leader": {
+                  "description": "`true` gives the band a leader ([`apply_leaders`]); absent leaves it to emergence. The file names\nneither the kind nor the name.",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "outfit": {
+                  "additionalProperties": false,
+                  "description": "The ONE optional key: absent keeps the default outfit fitted to this band's size.",
+                  "properties": {
+                    "kits": {
+                      "additionalProperties": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "type": "object"
+                    },
+                    "materials": {
+                      "additionalProperties": {
+                        "format": "uint32",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "kits",
+                    "materials"
+                  ],
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "size": {
+                  "description": "Head count.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "at",
+                "size",
+                "ages",
+                "founding_lines",
+                "larder"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "bench": {
+            "description": "The faction's bench commands, replayed in file order. A required key: `[]` for none.",
+            "items": {
+              "description": "One bench command. Field names match `sim_runtime::CommandPayload`'s; every field is required.",
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "`bench_enqueue`: queue `count` of one recipe.",
+                  "properties": {
+                    "bench_enqueue": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "band": {
+                          "type": "string",
+                          "x-pick": "band"
+                        },
+                        "count": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "recipe_id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "band",
+                        "recipe_id",
+                        "count"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "bench_enqueue"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "`bench_enqueue_kit`: queue `kits` of a whole kit as one grouped order, one recipe per item.",
+                  "properties": {
+                    "bench_enqueue_kit": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "band": {
+                          "type": "string",
+                          "x-pick": "band"
+                        },
+                        "kit_id": {
+                          "type": "string"
+                        },
+                        "kits": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "recipes": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "band",
+                        "kit_id",
+                        "kits",
+                        "recipes"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "bench_enqueue_kit"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "faction": {
+            "description": "The faction index (`0` is the human).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "knowledge": {
+            "description": "Knowledge tags the faction already has, added to its archetype's `starting_knowledge_tags`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "labor": {
+            "description": "The faction's opening work rows, replayed in order through `assign_labor` and `work_priority`.\nA required key: `[]` for none.",
+            "items": {
+              "description": "One labor entry, tagged by its verb: `{ \"assign_labor\": { ... } }`.",
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "assign_labor": {
+                      "additionalProperties": false,
+                      "description": "`CommandPayload::AssignLabor`, less `faction_id`, `band_id` (now `band`) and the retired `policy`.",
+                      "properties": {
+                        "band": {
+                          "description": "The band's id in this file.",
+                          "type": "string",
+                          "x-pick": "band"
+                        },
+                        "fauna_id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "x-pick": "herd"
+                        },
+                        "floor": {
+                          "format": "float",
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "kit_id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "move_with_herd": {
+                          "type": "boolean"
+                        },
+                        "role": {
+                          "type": "string"
+                        },
+                        "species": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "take_species": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "target_x": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "target_y": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "workers": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "band",
+                        "role",
+                        "workers",
+                        "take_species",
+                        "move_with_herd"
+                      ],
+                      "type": "object",
+                      "x-pick-tile": [
+                        "target_x",
+                        "target_y"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "assign_labor"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "work_priority": {
+                      "additionalProperties": false,
+                      "description": "`CommandPayload::WorkPriority`, less `faction_id` and with `band_id` replaced by `band`.",
+                      "properties": {
+                        "band": {
+                          "description": "The band's id in this file.",
+                          "type": "string",
+                          "x-pick": "band"
+                        },
+                        "branch": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "herd_id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "x-pick": "herd"
+                        },
+                        "level": {
+                          "description": "`\"high\"`, `\"normal\"` or `\"low\"`.",
+                          "type": "string"
+                        },
+                        "material": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "target_x": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "target_y": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "band",
+                        "level"
+                      ],
+                      "type": "object",
+                      "x-pick-tile": [
+                        "target_x",
+                        "target_y"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "work_priority"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "band_order": {
+                      "additionalProperties": false,
+                      "description": "`CommandPayload::BandOrder`, less `faction_id` and with `band_id` replaced by `band`. `target` and\n`priority` belong to `set` (the wire's `BandOrderAction::Set` fields); a row is named by\n`target_x` + `target_y` (a patch or working) or `herd_id` (a scenario herd id) and belongs to\n`release` and `claim` (the wire's `Option<BandOrderRow>`).",
+                      "properties": {
+                        "action": {
+                          "description": "`\"set\"`, `\"release\"` or `\"claim\"`.",
+                          "type": "string"
+                        },
+                        "band": {
+                          "description": "The band's id in this file.",
+                          "type": "string",
+                          "x-pick": "band"
+                        },
+                        "herd_id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "x-pick": "herd"
+                        },
+                        "kind": {
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "target": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "target_x": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "target_y": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "band",
+                        "kind",
+                        "action"
+                      ],
+                      "type": "object",
+                      "x-pick-tile": [
+                        "target_x",
+                        "target_y"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "band_order"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "pens": {
+            "description": "The faction's pen verbs, replayed after the builds. A required key: `[]` for none.",
+            "items": {
+              "description": "One pen entry, tagged by its verb: `{ \"extend_pen\": { \"herd\": \"sheep\" } }`.",
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "extend_pen": {
+                      "additionalProperties": false,
+                      "description": "`CommandPayload::ExtendPen`, naming the herd rather than the pen's tile.",
+                      "properties": {
+                        "herd": {
+                          "description": "The herd's scenario id.",
+                          "type": "string",
+                          "x-pick": "herd"
+                        }
+                      },
+                      "required": [
+                        "herd"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "extend_pen"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "set_herd_output": {
+                      "additionalProperties": false,
+                      "description": "`CommandPayload::SetHerdOutput`, naming the herd by its scenario id.",
+                      "properties": {
+                        "fraction": {
+                          "description": "The share of the herd that stands as milk, eggs and wool, in `[0, 1]`.",
+                          "format": "float",
+                          "type": "number"
+                        },
+                        "herd": {
+                          "description": "The herd's scenario id.",
+                          "type": "string",
+                          "x-pick": "herd"
+                        }
+                      },
+                      "required": [
+                        "herd",
+                        "fraction"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "set_herd_output"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "roads": {
+            "description": "The road rungs the faction holds at the start (`roads.rs`). A required key: `[]` for none.",
+            "items": {
+              "additionalProperties": false,
+              "description": "One held road tile.",
+              "properties": {
+                "at": {
+                  "description": "The tile, `[x, y]`, exactly.",
+                  "items": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "type": "array",
+                  "x-pick": "tile"
+                },
+                "keeper": {
+                  "description": "The band that keeps the road: a band id of this faction. Required on a rung that declares a\nverb (a built rung), refused on one that does not (the free floor has no keeper).",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "x-pick": "band"
+                },
+                "rung": {
+                  "description": "A rung id on the `route` branch, as the ladder config spells it.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "at",
+                "rung"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "rungs": {
+            "description": "Improvements the faction already holds and builds already declared (`rungs.rs`).",
+            "items": {
+              "description": "One entry of a faction's `rungs` list.",
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "description": "A source already holding a rung.",
+                  "properties": {
+                    "held": {
+                      "additionalProperties": false,
+                      "description": "A source held at a rung. Which fields it needs follows the rung's branch's source kind.",
+                      "properties": {
+                        "at": {
+                          "description": "The tile, for a patch or a working.",
+                          "items": {
+                            "format": "uint32",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "maxItems": 2,
+                          "minItems": 2,
+                          "type": [
+                            "array",
+                            "null"
+                          ],
+                          "x-pick": "tile"
+                        },
+                        "herd": {
+                          "description": "The herd id, for a herd.",
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "x-pick": "herd"
+                        },
+                        "material": {
+                          "description": "The material, for a working.",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "rung": {
+                          "description": "A rung id as the ladder spells it, `plant:tended`.",
+                          "type": "string"
+                        },
+                        "species": {
+                          "description": "The crop a patch is committed to, where a rung on the chain `requires_crop`.",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "rung"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "held"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "description": "A `BuildRung` command, replayed after the outfit.",
+                  "properties": {
+                    "build_rung": {
+                      "additionalProperties": false,
+                      "description": "`CommandPayload::BuildRung`, with no faction (the section's own) and the band named by its\nscenario id.",
+                      "properties": {
+                        "band": {
+                          "description": "The keeper band's scenario id.",
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "x-pick": "band"
+                        },
+                        "branch": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "herd_id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ],
+                          "x-pick": "herd"
+                        },
+                        "material": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "target_x": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "target_y": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "verb": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "verb"
+                      ],
+                      "type": "object",
+                      "x-pick-tile": [
+                        "target_x",
+                        "target_y"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "build_rung"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "faction",
+          "knowledge",
+          "bands",
+          "bench",
+          "rungs",
+          "labor",
+          "pens",
+          "roads"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "herds": {
+      "description": "Wild herds placed or set. Required: an empty list is fine, an absent key is not.",
+      "items": {
+        "additionalProperties": false,
+        "description": "One herd entry.",
+        "properties": {
+          "at": {
+            "description": "The tile, `[x, y]`.",
+            "items": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array",
+            "x-pick": "tile"
+          },
+          "gone": {
+            "description": "`true` on a `worldgen` entry: the herd worldgen spawns on `at` no longer exists, and the load\ndespawns it. Written only when true. Such an entry's `stock` is not read and is written as\n[`GONE_HERD_STOCK`]; `placed` refuses it.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "The herd's id inside this file. Later sections name a herd by it.",
+            "type": "string"
+          },
+          "origin": {
+            "description": "Where the herd comes from.",
+            "oneOf": [
+              {
+                "const": "placed",
+                "description": "A new wild herd of the species is put on the tile.",
+                "type": "string"
+              },
+              {
+                "const": "worldgen",
+                "description": "The herd the generated world already has there is set to `stock`.",
+                "type": "string"
+              }
+            ]
+          },
+          "species": {
+            "description": "A `fauna_config.json` species KEY (`aurochs`), not the display name.",
+            "type": "string"
+          },
+          "stock": {
+            "description": "Biomass as a fraction of the K the herd lives under on its first turn (the ecological K the\nturn loop writes, for a placed and a worldgen herd alike), in `(0, 1]`.",
+            "format": "float",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "species",
+          "at",
+          "stock",
+          "origin"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "name": {
+      "type": "string"
+    },
+    "note": {
+      "type": "string"
+    },
+    "tiles": {
+      "description": "The tile overrides, applied as a worldgen input. A required key: `[]` for none.",
+      "items": {
+        "additionalProperties": false,
+        "description": "One tile the file overrides.",
+        "properties": {
+          "at": {
+            "description": "The tile, `[x, y]`.",
+            "items": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array",
+            "x-pick": "tile"
+          },
+          "flora": {
+            "description": "The plants that grow here, as `flora_config.json` species keys. Absent keeps the generated\nbasket.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "terrain": {
+            "description": "A `TerrainType` name (`\"AlluvialPlain\"`). Absent keeps the generated biome.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "at"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "world": {
+      "additionalProperties": false,
+      "description": "The `new_game` arguments, every one required.",
+      "properties": {
+        "archetypes": {
+          "additionalProperties": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "preset": {
+          "type": "string"
+        },
+        "profile": {
+          "type": "string"
+        },
+        "seed": {
+          "description": "Never `0`: `new_game` reads `0` as \"pick a random seed\", and a scenario names a real one.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "preset",
+        "width",
+        "height",
+        "seed",
+        "profile",
+        "archetypes"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "name",
+    "note",
+    "world",
+    "factions",
+    "tiles",
+    "herds",
+    "deposits"
+  ],
+  "title": "ScenarioFile",
+  "type": "object"
+}

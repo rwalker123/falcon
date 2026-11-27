@@ -1135,6 +1135,27 @@ pub fn apply_starting_inventory_effects(
     seed_cohort_demographics(&demographics.get(), &mut cohorts, scenario.as_deref());
 }
 
+/// **Stamp a scenario band's age shape and EXACT larder onto its cohort**, from the file's `size`,
+/// `ages` and `larder`. The shares sum to 1 within `AGES_SUM_TOLERANCE`; divided by their sum, the
+/// head-count is exactly `size` whatever the file's rounding. The one body both the Startup seeding
+/// and the loader's re-stamp after its build turn ([`crate::scenario::finish_scenario`]) run.
+pub fn seed_scenario_band(
+    config: &DemographicsConfig,
+    cohort: &mut PopulationCohort,
+    entry: &crate::scenario::BandEntry,
+) {
+    let [children, working, elders] = entry.ages.normalised();
+    cohort.set_brackets_from_size(entry.size, children, working, elders);
+    cohort
+        .stores
+        .reset_food(&config.keeping.startup_class, scalar_zero());
+    for listed in &entry.larder {
+        cohort
+            .stores
+            .add_food(&listed.class, scalar_from_f32(listed.amount));
+    }
+}
+
 /// Split each cohort's head-count into the three age brackets, seed its larder with
 /// `startup.food_reserve_days` turns of its own food demand, and apply the well-fed morale bonus.
 fn seed_cohort_demographics(
@@ -1153,18 +1174,7 @@ fn seed_cohort_demographics(
             .zip(scenario)
             .and_then(|(band, setup)| setup.band_entry(*band))
         {
-            // The shares sum to 1 within `AGES_SUM_TOLERANCE`; divided by their sum, the head-count
-            // is exactly `size` whatever the file's rounding.
-            let [children, working, elders] = entry.ages.normalised();
-            cohort.set_brackets_from_size(size, children, working, elders);
-            cohort
-                .stores
-                .reset_food(&config.keeping.startup_class, scalar_zero());
-            for listed in &entry.larder {
-                cohort
-                    .stores
-                    .add_food(&listed.class, scalar_from_f32(listed.amount));
-            }
+            seed_scenario_band(config, &mut cohort, entry);
             cohort.morale = (cohort.morale + morale_bonus).clamp(scalar_zero(), scalar_one());
             continue;
         }

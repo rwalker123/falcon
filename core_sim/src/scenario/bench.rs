@@ -11,23 +11,27 @@
 use std::collections::BTreeSet;
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use super::{FactionSection, ScenarioContext, ScenarioRefusal, ScenarioSetup};
+use super::{ExportIds, FactionSection, ScenarioContext, ScenarioRefusal, ScenarioSetup};
 use crate::command_seam::{apply_bench_enqueue, apply_bench_enqueue_kit};
+use crate::components::{BandBench, MIN_ORDER_COUNT, NOT_A_KIT_PART};
+use crate::orders::FactionId;
 
 /// One bench command. Field names match `sim_runtime::CommandPayload`'s; every field is required.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum BenchEntry {
     /// `bench_enqueue`: queue `count` of one recipe.
     BenchEnqueue {
+        #[schemars(extend("x-pick" = "band"))]
         band: String,
         recipe_id: String,
         count: u32,
     },
     /// `bench_enqueue_kit`: queue `kits` of a whole kit as one grouped order, one recipe per item.
     BenchEnqueueKit {
+        #[schemars(extend("x-pick" = "band"))]
         band: String,
         kit_id: String,
         kits: u32,
@@ -96,6 +100,55 @@ fn check_recipe(
             format!("'{recipe_id}' is not a recipe"),
         ));
     }
+}
+
+/// **One faction's bench queues, as the commands that rebuild them**: per band in ascending `BandId`
+/// order, the queue head first. The parts of one kit order are one `bench_enqueue_kit` (its recipes in
+/// queue order); any other order is a `bench_enqueue` for the count still to make. An order auto-craft
+/// queued is not written: the band's `auto_craft` key refills it.
+pub(super) fn export(world: &World, faction: FactionId, ids: &ExportIds) -> Vec<BenchEntry> {
+    let mut entries = Vec::new();
+    for band in ids.faction_bands.get(&faction).into_iter().flatten() {
+        let Some(bench) = world.get::<BandBench>(band.entity) else {
+            continue;
+        };
+        let mut done_kits: BTreeSet<u32> = BTreeSet::new();
+        for order in &bench.orders {
+            if order.auto {
+                continue;
+            }
+            if order.kit_order != NOT_A_KIT_PART {
+                if !done_kits.insert(order.kit_order) {
+                    continue;
+                }
+                let Some(kit) = bench
+                    .kit_orders
+                    .iter()
+                    .find(|kit| kit.id == order.kit_order)
+                else {
+                    continue;
+                };
+                entries.push(BenchEntry::BenchEnqueueKit {
+                    band: band.scenario_id.clone(),
+                    kit_id: kit.kit_id.clone(),
+                    kits: kit.kits,
+                    recipes: bench
+                        .orders
+                        .iter()
+                        .filter(|part| part.kit_order == order.kit_order)
+                        .map(|part| part.recipe_id.clone())
+                        .collect(),
+                });
+            } else {
+                entries.push(BenchEntry::BenchEnqueue {
+                    band: band.scenario_id.clone(),
+                    recipe_id: order.recipe_id.clone(),
+                    count: order.count.saturating_sub(order.made).max(MIN_ORDER_COUNT),
+                });
+            }
+        }
+    }
+    entries
 }
 
 /// **Step 6: replay every faction's bench entries, in faction order then file order.** The first

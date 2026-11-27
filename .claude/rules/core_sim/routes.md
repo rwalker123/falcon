@@ -1232,6 +1232,8 @@ holds. The roads are setters, applied after the held rungs and before any comman
   `the_checked_in_fixture_keeps_its_roads` runs it past the paved grace.
 - A scenario trail has no traffic history, so it is lost to disuse like any trail nobody walks.
 
+**Export** writes each road held above its branch's root: a kept road under its keeper's faction with the keeper's scenario id, a trail under the lowest exported faction. A road whose keeper is not an exported band, or is a faction the export leaves out, is noted once.
+
 ## Config files
 
 | File | Key | Purpose |

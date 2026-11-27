@@ -9,9 +9,9 @@
 use std::collections::BTreeMap;
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use super::{ScenarioContext, ScenarioRefusal};
+use super::{round_export, ScenarioContext, ScenarioRefusal};
 use crate::components::Tile;
 use crate::extraction::{tile_deposit_capacity, DepositRegistry};
 use crate::extraction_config::{ExtractionConfigHandle, NO_DEPOSIT};
@@ -19,10 +19,11 @@ use crate::intensification::LadderConfigHandle;
 use crate::resources::TileRegistry;
 
 /// One working's remaining stock.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DepositEntry {
     /// The tile the working stands on, `[x, y]`.
+    #[schemars(extend("x-pick" = "tile"))]
     pub at: [u32; 2],
     /// An `extraction.json` deposit id.
     pub material: String,
@@ -61,6 +62,27 @@ pub(super) fn check(
             ));
         }
     }
+}
+
+/// **Every opened working's remaining stock**, in `(x, y, material)` order. A stock is held under the
+/// tile's capacity, which the fit refuses an entry over.
+pub(super) fn export(world: &World) -> Vec<DepositEntry> {
+    let config = world.resource::<ExtractionConfigHandle>().get();
+    world
+        .resource::<DepositRegistry>()
+        .sources
+        .iter()
+        .map(|((x, y, material), source)| {
+            let capacity = ground_of(world, [*x, *y])
+                .map(|ground| tile_deposit_capacity(&config, material, &ground))
+                .unwrap_or(f32::INFINITY);
+            DepositEntry {
+                at: [*x, *y],
+                material: material.clone(),
+                stock: round_export(source.stock).min(capacity),
+            }
+        })
+        .collect()
 }
 
 /// The ground an entry names, if it is on the map.

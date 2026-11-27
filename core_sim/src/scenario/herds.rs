@@ -11,14 +11,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy::ecs::system::SystemState;
 use bevy::prelude::*;
 use rand::{rngs::SmallRng, SeedableRng};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use super::{ScenarioContext, ScenarioRefusal, WorldSection};
+use super::{
+    export_float_unit, herd_scenario_id, round_export, ScenarioContext, ScenarioRefusal,
+    WorldSection,
+};
 use crate::fauna::{
     build_migratory_route, build_prey_index, build_short_route, habitat_refusal,
     herd_above_extinction_floor, herd_capacity, herd_ecology, herd_from_species, regrow_biomass,
     suitable_tiles_by_module, suitable_tiles_for, wild_herd_capacity, Herd, HerdDensityMap,
-    HerdRegistry, HerdTelemetry, PreyReach, RoamState, SeedTile,
+    HerdRegistry, HerdTelemetry, PreyReach, RoamState, SeedTile, WorldgenHerdRecord,
+    WorldgenHerdRoster,
 };
 use crate::fauna_config::{Diet, FaunaConfigHandle, SpeciesDef};
 use crate::graze::GrazeRegistry;
@@ -36,7 +40,7 @@ pub const SCENARIO_HERD_SEED_SALT: u64 = 0x5CE4_A410_4E2D_0001;
 pub const SCENARIO_HERD_ID_PREFIX: &str = "scenario_";
 
 /// One herd entry.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HerdEntry {
     /// The herd's id inside this file. Later sections name a herd by it.
@@ -44,15 +48,24 @@ pub struct HerdEntry {
     /// A `fauna_config.json` species KEY (`aurochs`), not the display name.
     pub species: String,
     /// The tile, `[x, y]`.
+    #[schemars(extend("x-pick" = "tile"))]
     pub at: [u32; 2],
     /// Biomass as a fraction of the K the herd lives under on its first turn (the ecological K the
     /// turn loop writes, for a placed and a worldgen herd alike), in `(0, 1]`.
     pub stock: f32,
     pub origin: HerdOrigin,
+    /// `true` on a `worldgen` entry: the herd worldgen spawns on `at` no longer exists, and the load
+    /// despawns it. Written only when true. Such an entry's `stock` is not read and is written as
+    /// [`GONE_HERD_STOCK`]; `placed` refuses it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gone: Option<bool>,
 }
 
+/// The `stock` a `gone` entry carries, which the loader does not read.
+pub const GONE_HERD_STOCK: f32 = 1.0;
+
 /// Where the herd comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HerdOrigin {
     /// A new wild herd of the species is put on the tile.
@@ -95,7 +108,31 @@ pub(super) fn check(
                 format!("'{}' is not a fauna species", entry.species),
             ));
         }
-        if !entry.stock.is_finite() || entry.stock <= 0.0 || entry.stock > 1.0 {
+        if entry.gone == Some(true) {
+            if entry.origin != HerdOrigin::Worldgen {
+                refusals.push(ScenarioRefusal::new(
+                    format!("{at}.gone"),
+                    "only a worldgen herd can be gone; a placed herd is simply left out",
+                ));
+            }
+            if entry.stock != GONE_HERD_STOCK {
+                refusals.push(ScenarioRefusal::new(
+                    format!("{at}.stock"),
+                    format!(
+                        "a gone herd has no stock to set; write {GONE_HERD_STOCK} (got {})",
+                        entry.stock
+                    ),
+                ));
+            }
+        } else if entry.gone.is_some() {
+            refusals.push(ScenarioRefusal::new(
+                format!("{at}.gone"),
+                "gone is written only as true; leave it out for a herd that exists",
+            ));
+        }
+        if entry.gone != Some(true)
+            && (!entry.stock.is_finite() || entry.stock <= 0.0 || entry.stock > 1.0)
+        {
             refusals.push(ScenarioRefusal::new(
                 format!("{at}.stock"),
                 format!(
@@ -120,6 +157,8 @@ pub(super) fn check(
 pub(super) enum Fitted {
     /// A new herd, fully built.
     Place { id: String, herd: Box<Herd> },
+    /// An existing worldgen herd, removed (`gone`).
+    Remove { runtime_id: String },
     /// An existing worldgen herd, set to `biomass`.
     Set {
         id: String,
@@ -146,6 +185,10 @@ pub(super) fn fit(world: &mut World, entries: &[HerdEntry]) -> (Vec<Fitted>, Vec
     if entries.is_empty() {
         return (fitted, refusals);
     }
+    let roster = world
+        .get_resource::<WorldgenHerdRoster>()
+        .cloned()
+        .unwrap_or_default();
     let mut state: SystemState<FitParams> = SystemState::new(world);
     let (tiles, registry, herds, fauna_handle, ladder_handle, config, graze) = state.get(world);
     let fauna = fauna_handle.get();
@@ -285,12 +328,34 @@ pub(super) fn fit(world: &mut World, entries: &[HerdEntry]) -> (Vec<Fitted>, Vec
                 });
             }
             HerdOrigin::Worldgen => {
-                let standing: Vec<&Herd> = herds
-                    .herds
-                    .iter()
-                    .filter(|herd| herd.species == def.display_name && herd.position() == at)
+                // **A worldgen herd is named by the tile it spawned on, else by the tile it stands
+                // on after the build turn.** The export writes the spawn tile (a herd that has
+                // wandered is not where the first turn finds it); a hand-written file names where the
+                // herd stands. The spawn tile wins where a herd has one there.
+                let of_species = || {
+                    herds
+                        .herds
+                        .iter()
+                        .filter(|herd| herd.species == def.display_name)
+                };
+                let spawned: Vec<&Herd> = of_species()
+                    .filter(|herd| herd.route.first() == Some(&at))
                     .collect();
+                let standing: Vec<&Herd> = if spawned.is_empty() {
+                    of_species().filter(|herd| herd.position() == at).collect()
+                } else {
+                    spawned
+                };
                 let herd = match standing.as_slice() {
+                    // A gone herd the build turn already dispersed (the roster still names it) is
+                    // as gone as the file asks.
+                    [] if entry.gone == Some(true)
+                        && roster.herds.iter().any(|record| {
+                            record.spawn == at && record.species == def.display_name
+                        }) =>
+                    {
+                        continue;
+                    }
                     [] => {
                         refusals.push(ScenarioRefusal::new(
                             format!("herds[{i}].at"),
@@ -331,6 +396,13 @@ pub(super) fn fit(world: &mut World, entries: &[HerdEntry]) -> (Vec<Fitted>, Vec
                             at.x, at.y
                         ),
                     ));
+                    continue;
+                }
+                if entry.gone == Some(true) {
+                    working.retain(|other| other.id != herd.id);
+                    fitted.push(Fitted::Remove {
+                        runtime_id: herd.id.clone(),
+                    });
                     continue;
                 }
                 let mut set = herd.clone();
@@ -418,6 +490,256 @@ fn no_herd_there(
     }
 }
 
+/// The tile nearest `from` (hex distance, then `(y, x)`) that `passes`, over the whole grid.
+fn nearest_passing_tile(
+    from: UVec2,
+    width: u32,
+    height: u32,
+    wrap: bool,
+    passes: impl Fn(UVec2) -> bool,
+) -> Option<UVec2> {
+    let mut candidates: Vec<(u32, u32, u32)> = (0..height)
+        .flat_map(|y| (0..width).map(move |x| UVec2::new(x, y)))
+        .map(|pos| (hex_distance_wrapped(from, pos, width, wrap), pos.y, pos.x))
+        .collect();
+    candidates.sort_unstable();
+    candidates
+        .into_iter()
+        .map(|(_, y, x)| UVec2::new(x, y))
+        .find(|pos| passes(*pos))
+}
+
+/// The id prefixes of a herd worldgen spawns (`herd_` migratory, `game_` short-range, `pred_` a
+/// predator pack). A herd with any other id (a scenario's own, a neglect-escaped feral herd) has no
+/// worldgen origin.
+const WORLDGEN_HERD_PREFIXES: [&str; 2] = ["herd_", "pred_"];
+/// The id prefix of a short-range game group, worldgen's and an immigrant's alike.
+const GAME_HERD_PREFIX: &str = "game_";
+
+/// The tick `repopulate_fauna` runs at on a world's build turn. Its immigrant is numbered
+/// `max_total_game + tick`, and a reload's own build turn draws the same one again.
+const BUILD_TURN_TICK: u32 = 0;
+
+/// Is `herd` one a fresh world holds? A `game_` id past the initial cap (`abundance.max_total_game`) is
+/// an immigrant (`repopulate_fauna` numbers them from the cap up plus the tick); only the build turn's
+/// is drawn again by a reload.
+fn has_worldgen_origin(herd: &Herd, max_total_game: u32) -> bool {
+    if let Some(index) = herd.id.strip_prefix(GAME_HERD_PREFIX) {
+        let numbered = index.rsplit('_').next().and_then(|n| n.parse::<u32>().ok());
+        return numbered.is_some_and(|n| n <= max_total_game + BUILD_TURN_TICK);
+    }
+    WORLDGEN_HERD_PREFIXES
+        .iter()
+        .any(|prefix| herd.id.starts_with(prefix))
+}
+
+/// What the export orders: a herd in the registry, or a worldgen herd the registry has lost.
+enum Listed<'a> {
+    Live(&'a Herd, &'a str),
+    Gone(&'a WorldgenHerdRecord, &'a str),
+}
+
+/// A `gone` entry for the worldgen herd of species `key` that spawned on `spawn`, taking slot `index`.
+fn gone_entry(index: usize, key: &str, spawn: UVec2) -> HerdEntry {
+    HerdEntry {
+        id: herd_scenario_id(index),
+        species: key.to_string(),
+        at: [spawn.x, spawn.y],
+        stock: GONE_HERD_STOCK,
+        origin: HerdOrigin::Worldgen,
+        gone: Some(true),
+    }
+}
+
+/// **Every herd, as entries, and the runtime id to scenario id map every other section names herds by.**
+///
+/// Export order: the worldgen herds by runtime id, then the others by `(species key, y, x, id)` -
+/// the order a reload reproduces, because a worldgen herd keeps its id and a placed one is rebuilt
+/// at the tile the file names. The scenario id is `herd<n>`, `n` the position in that order.
+///
+/// A worldgen herd is written at its spawn tile (the first step of its route) with `origin: worldgen`;
+/// one standing elsewhere is noted. Any other herd is `origin: placed` at its current tile. `stock`
+/// is biomass over the herd's current capacity, kept in `(0, 1]`.
+pub(super) fn export(
+    world: &mut World,
+    notes: &mut Vec<String>,
+) -> (Vec<HerdEntry>, BTreeMap<String, String>) {
+    let mut habitat_state: SystemState<FitParams> = SystemState::new(world);
+    let world: &World = world;
+    let fauna = world.resource::<FaunaConfigHandle>().get();
+    let max_total_game = fauna.abundance.max_total_game as u32;
+    let key_of: BTreeMap<&str, &str> = fauna
+        .species
+        .iter()
+        .map(|(key, def)| (def.display_name.as_str(), key.as_str()))
+        .collect();
+    let def_of = |key: &str| fauna.species.get(key);
+    let registry = world.resource::<HerdRegistry>();
+    let mut listed: Vec<Listed> = Vec::new();
+    for herd in &registry.herds {
+        match key_of.get(herd.species.as_str()) {
+            Some(key) => listed.push(Listed::Live(herd, key)),
+            None => notes.push(format!(
+                "herd {} is a '{}', which is no species of the fauna config, and is not exported",
+                herd.id, herd.species
+            )),
+        }
+    }
+    // **A worldgen herd that is no longer in the registry is written as a `gone` entry**, so a reload
+    // does not spawn it again. The roster is what worldgen made; a world restored from a save has none.
+    let roster = world.get_resource::<WorldgenHerdRoster>();
+    if roster.is_none()
+        && registry
+            .herds
+            .iter()
+            .any(|h| has_worldgen_origin(h, max_total_game))
+    {
+        notes.push(
+            "this world has no record of the herds worldgen spawned (it was restored from a save), \
+             so a worldgen herd that has died out is not exported as gone and a reload spawns it again"
+                .to_string(),
+        );
+    }
+    for record in roster.iter().flat_map(|roster| roster.herds.iter()) {
+        if registry.find(&record.id).is_some() {
+            continue;
+        }
+        match key_of.get(record.species.as_str()) {
+            Some(key) => listed.push(Listed::Gone(record, key)),
+            None => notes.push(format!(
+                "worldgen herd {} is a '{}', which is no species of the fauna config, and is not exported",
+                record.id, record.species
+            )),
+        }
+    }
+    listed.sort_by_key(|item| match item {
+        Listed::Live(herd, key) if !has_worldgen_origin(herd, max_total_game) => (
+            1,
+            key.to_string(),
+            herd.position().y,
+            herd.position().x,
+            herd.id.clone(),
+        ),
+        Listed::Live(herd, _) => (0, String::new(), 0, 0, herd.id.clone()),
+        Listed::Gone(record, _) => (0, String::new(), 0, 0, record.id.clone()),
+    });
+    let mut entries = Vec::new();
+    let mut ids = BTreeMap::new();
+    let mut wandered = 0usize;
+    let mut gone_count = 0usize;
+    for item in listed {
+        let (herd, key) = match item {
+            Listed::Live(herd, key) => (herd, key),
+            Listed::Gone(record, key) => {
+                gone_count += 1;
+                entries.push(gone_entry(entries.len(), key, record.spawn));
+                continue;
+            }
+        };
+        let capacity = herd.carrying_capacity;
+        if capacity <= 0.0 || herd.biomass <= 0.0 {
+            // A worldgen herd with no stock is as good as extinct: it holds its slot as a gone entry.
+            if has_worldgen_origin(herd, max_total_game) {
+                gone_count += 1;
+                let spawn = herd
+                    .route
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| herd.position());
+                entries.push(gone_entry(entries.len(), key, spawn));
+            } else {
+                notes.push(format!(
+                    "herd {} has no stock or no capacity and is not exported",
+                    herd.id
+                ));
+            }
+            continue;
+        }
+        let raw_stock = herd.biomass / capacity;
+        let stock = round_export(raw_stock.min(1.0)).max(export_float_unit());
+        if raw_stock > 1.0 {
+            notes.push(format!(
+                "herd {} stands over its capacity ({raw_stock:.2}x) and is exported at 1",
+                herd.id
+            ));
+        }
+        let (origin, at) = if has_worldgen_origin(herd, max_total_game) {
+            let spawn = herd
+                .route
+                .first()
+                .copied()
+                .unwrap_or_else(|| herd.position());
+            if spawn != herd.position() {
+                wandered += 1;
+            }
+            (HerdOrigin::Worldgen, spawn)
+        } else {
+            let standing = herd.position();
+            let at = match def_of(key) {
+                Some(def) => {
+                    let (tiles, registry, herds, _, _, config, _) = habitat_state.get(world);
+                    let prey_index = build_prey_index(&herds.herds, &fauna);
+                    let reach = PreyReach {
+                        index: &prey_index,
+                        radius: fauna.predators.prey_sense_radius,
+                    };
+                    let (width, height) = (config.grid_size.x, config.grid_size.y);
+                    let wrap = config.map_topology.wrap_horizontal;
+                    let refused = |pos: UVec2| {
+                        habitat_refusal(def, pos, width, height, wrap, &registry, &tiles, &reach)
+                            .is_some()
+                    };
+                    if refused(standing) {
+                        let nearest = nearest_passing_tile(standing, width, height, wrap, |pos| {
+                            !refused(pos)
+                        });
+                        match nearest {
+                            Some(tile) => {
+                                notes.push(format!(
+                                    "{}: exported at ({},{}), nearest ground it can be placed on \
+                                     (it stands at ({},{}), which its species does not live on)",
+                                    herd_scenario_id(entries.len()),
+                                    tile.x,
+                                    tile.y,
+                                    standing.x,
+                                    standing.y
+                                ));
+                                tile
+                            }
+                            None => standing,
+                        }
+                    } else {
+                        standing
+                    }
+                }
+                None => standing,
+            };
+            (HerdOrigin::Placed, at)
+        };
+        let scenario_id = herd_scenario_id(entries.len());
+        ids.insert(herd.id.clone(), scenario_id.clone());
+        entries.push(HerdEntry {
+            id: scenario_id,
+            species: key.to_string(),
+            at: [at.x, at.y],
+            stock,
+            origin,
+            gone: None,
+        });
+    }
+    if gone_count > 0 {
+        notes.push(format!(
+            "{gone_count} worldgen herd(s) no longer exist and are exported as gone entries"
+        ));
+    }
+    if wandered > 0 {
+        notes.push(format!(
+            "{wandered} worldgen herd(s) stand away from their spawn tile and are exported at it"
+        ));
+    }
+    (entries, ids)
+}
+
 /// **Apply the fitted herds**, then republish them the way `spawn_initial_herds` does. Returns the
 /// scenario id to runtime herd id map.
 pub(super) fn apply(world: &mut World, fitted: Vec<Fitted>) -> BTreeMap<String, String> {
@@ -435,6 +757,9 @@ pub(super) fn apply(world: &mut World, fitted: Vec<Fitted>) -> BTreeMap<String, 
                 Fitted::Place { id, herd } => {
                     applied.insert(id, herd.id.clone());
                     registry.herds.push(*herd);
+                }
+                Fitted::Remove { runtime_id } => {
+                    registry.herds.retain(|herd| herd.id != runtime_id);
                 }
                 Fitted::Set {
                     id,

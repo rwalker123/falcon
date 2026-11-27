@@ -171,13 +171,21 @@ impl BandLeadership {
         if !self.ready(config) {
             return None;
         }
+        Some(self.appoint(axis_value, turn, name()))
+    }
+
+    /// **Make the band's leader**: the kind is the band's own `HierarchicalEgalitarian` reading's
+    /// ([`LeaderKind::for_axis_value`]), `since_turn` is `turn`, and the practice bar is left where it
+    /// stands. The one body [`Self::emerge`] (after its `ready` check) and a scenario's `leader` setter
+    /// both run, so the setter cannot write a leader the game's own rules would not make.
+    pub fn appoint(&mut self, axis_value: f32, turn: u64, name: String) -> BandLeader {
         let leader = BandLeader {
-            name: name(),
+            name,
             kind: LeaderKind::for_axis_value(axis_value),
             since_turn: turn,
         };
         self.leader = Some(leader.clone());
-        Some(leader)
+        leader
     }
 }
 

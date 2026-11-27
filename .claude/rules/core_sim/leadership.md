@@ -1,6 +1,7 @@
 ---
 paths:
   - "core_sim/src/leadership.rs"
+  - "core_sim/src/scenario/bands.rs"
   - "core_sim/src/chief_proposals.rs"
   - "core_sim/src/leadership_config.rs"
   - "core_sim/src/leader_names.rs"
@@ -430,3 +431,22 @@ checkpoint), `staffing::tests` (the levy step, the ceiling ladder, the leaderles
 the stretch, the trim order), `tribe_levy::tests` (the stretch geometry), `route_traffic::a_tribe_pair_pools_out_to_the_tribe_reach_and_no_further`,
 `supply_network_config::tests`, `command_text` (the round trips) and `sim_ai`'s
 `a_tribe_member_does_not_ask_to_scout`.
+
+## Scenario section
+
+A scenario band takes the optional key `bands[].leader: true` (`core_sim/src/scenario/bands.rs`,
+`apply_leaders`). The file names neither the kind nor the name. The setter runs in `finish_scenario`
+after the outfit and auto-craft replays and immediately before labor (a `band_order` entry needs a leader, and a
+led band's restaff runs its chief's managing pass; a `leader: true` band's build-turn leadership, orders and
+listed rows are reset first),
+and gives the band its leader through `BandLeadership::appoint(axis_value, turn, name)`, the body
+`BandLeadership::emerge` runs after its `ready` check: the kind is `LeaderKind::for_axis_value` of the
+band's own `HierarchicalEgalitarian` culture reading, the name is `name_for_band(map_seed, band)`,
+`since_turn` is the current tick, and the practice bar is left where it stands. The same `LeaderEmerged`
+feed line (`emergence_entry`) is written. A band that already has a leader (the build turn can make one)
+is left alone. A band with no culture layer is refused at `factions[i].bands[j].leader`; a band has one
+by the time `finish_scenario` runs, so no test reaches that refusal.
+
+Export writes `leader: true` on a band that holds one and notes that its name and kind are derived again
+on load (the name from the band id, the kind from the culture axis then). A leaderless band with banked
+practice above zero is noted ("its leadership practice X of Y is not exported").
