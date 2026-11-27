@@ -88,7 +88,7 @@
                   "x-pick": "tile"
                 },
                 "auto_craft": {
-                  "description": "The second optional key: absent leaves the band's bench auto-craft off, `true` switches it\non after the outfit, as the server's `set_auto_craft` does.",
+                  "description": "Absent leaves the band's bench auto-craft off, `true` switches it\non after the outfit, as the server's `set_auto_craft` does.",
                   "type": [
                     "boolean",
                     "null"
@@ -126,6 +126,13 @@
                     "type": "object"
                   },
                   "type": "array"
+                },
+                "leader": {
+                  "description": "`true` gives the band a leader ([`apply_leaders`]); absent leaves it to emergence. The file names\nneither the kind nor the name.",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
                 },
                 "outfit": {
                   "additionalProperties": false,
@@ -787,6 +794,13 @@
             "minItems": 2,
             "type": "array",
             "x-pick": "tile"
+          },
+          "gone": {
+            "description": "`true` on a `worldgen` entry: the herd worldgen spawns on `at` no longer exists, and the load\ndespawns it. Written only when true. Such an entry's `stock` is not read and is written as\n[`GONE_HERD_STOCK`]; `placed` refuses it.",
+            "type": [
+              "boolean",
+              "null"
+            ]
           },
           "id": {
             "description": "The herd's id inside this file. Later sections name a herd by it.",

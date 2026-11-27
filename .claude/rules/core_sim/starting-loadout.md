@@ -24,12 +24,13 @@ said on the feed"). The client half is
 
 ## Every band gets a window, and turn one is NOT a special case
 
-Two things open a window and nothing else does:
+Three things open a window and nothing else does:
 
 | opener | when | the window it opens |
 |---|---|---|
 | `stamp_starting_loadout` | Startup, chained after the spawn | the spawned band's, carrying the campaign's **grant**. `outfit_opening_bands` is chained straight after it and commits the default against that grant |
 | `split_band_from_parent` | every split, every turn | the splinter's, **carrying its accepted allocation** — the default take it was moved, or (on a grant) the split default it mints against its own carry |
+| `scenario::finish_scenario` | a scenario load only, before the outfit replay | a Grant window (`carry_budget: None`, the band's own carry read live) for each scenario band that states an `outfit` and has no open window, so a second outfitted band mints against a grant of its own (`scenarios.md`) |
 
 **Turn one is not special — only the PARENT's state differs.** On turn one the parent still holds an
 unspent grant, so its splinter mints against a grant of its own (`carry_capacity(asked)`), its picks **mint**, and the split moves no

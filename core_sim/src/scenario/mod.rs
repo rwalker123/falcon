@@ -24,13 +24,13 @@ pub mod roads;
 pub mod rungs;
 pub mod tiles;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub use bands::{
     Ages, BandEntry, FactionSection, FactionSetup, LarderEntry, Outfit, ScenarioSetup,
@@ -57,14 +57,18 @@ use crate::intensification::{LadderConfig, LadderConfigHandle};
 use crate::labor_commands::BuildSourceRef;
 use crate::map_preset::{MapPresets, MapPresetsHandle};
 use crate::materials_config::{MaterialsConfig, MaterialsConfigHandle};
+use crate::orders::FactionId;
 use crate::recipes_config::{RecipesConfig, RecipesConfigHandle};
 use crate::resources::SimulationConfig;
 use crate::run_turn;
+use crate::source_holders::ScenarioLaborReservations;
 use crate::start_profile::{
-    StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartProfiles,
-    StartProfilesHandle,
+    StartProfile, StartProfileKnowledgeTags, StartProfileKnowledgeTagsHandle, StartProfileLookup,
+    StartProfiles, StartProfilesHandle,
 };
-use crate::starting_loadout::{KitAllocation, MaterialAllocation};
+use crate::starting_loadout::{
+    KitAllocation, LoadoutSupply, LoadoutWindow, MaterialAllocation, StartingLoadout,
+};
 use crate::world_roster::{apply_start_profile, seed_faction_roster};
 use crate::{faction_start_land_fraction, granted_archetype_counts};
 
@@ -202,7 +206,7 @@ impl fmt::Display for ScenarioRefusal {
 }
 
 /// The scenario file.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScenarioFile {
     pub name: String,
@@ -218,7 +222,7 @@ pub struct ScenarioFile {
 }
 
 /// The `new_game` arguments, every one required.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorldSection {
     pub preset: String,
@@ -420,6 +424,169 @@ pub fn build_scenario_world(
     finish_scenario(&mut app.world, &plan.file.deposits)
 }
 
+/// **How many decimal places an exported float keeps** (ages, larders, a herd's stock, a floor).
+/// One constant for every float the export writes, so an exported value is already at the precision
+/// the file holds it at and a second export of the reloaded world writes the same number.
+pub const EXPORT_FLOAT_DECIMALS: i32 = 4;
+
+/// The base the export's decimal rounding scales by.
+const DECIMAL_BASE: f64 = 10.0;
+
+/// A band's scenario id is `f<faction>_band<n>`: these are its two literal parts.
+const BAND_ID_FACTION_PREFIX: &str = "f";
+const BAND_ID_INDEX_INFIX: &str = "_band";
+/// A herd's scenario id is `herd<n>`.
+const HERD_ID_PREFIX: &str = "herd";
+
+/// **Round an exported float to [`EXPORT_FLOAT_DECIMALS`] places.**
+pub(crate) fn round_export(value: f32) -> f32 {
+    let scale = DECIMAL_BASE.powi(EXPORT_FLOAT_DECIMALS);
+    ((f64::from(value) * scale).round() / scale) as f32
+}
+
+/// The smallest positive value an exported float can hold: one unit of the last kept decimal place.
+pub(crate) fn export_float_unit() -> f32 {
+    DECIMAL_BASE.powi(-EXPORT_FLOAT_DECIMALS) as f32
+}
+
+/// **What `export_scenario` produced**: the file, and the lines naming what the live world holds that
+/// the file cannot say.
+#[derive(Debug, Clone)]
+pub struct ScenarioExport {
+    pub file: ScenarioFile,
+    /// One line per thing left out. The same lines, joined, are `file.note`.
+    pub notes: Vec<String>,
+}
+
+/// **One resident band the export saw**, with the id the file will name it by.
+#[derive(Debug, Clone)]
+pub(crate) struct ExportedBand {
+    pub entity: Entity,
+    /// `f<faction>_band<n>`, `n` the band's index among its faction's bands in ascending `BandId`
+    /// order: the order a reload spawns them in, so the lowest id comes back first.
+    pub scenario_id: String,
+}
+
+/// **The ids every section names a band or a herd by.** Positional, so an export of a reloaded
+/// world writes the same ids: a runtime `BandId` or herd id does not survive a regeneration.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ExportIds {
+    /// The exported factions' bands, in ascending `BandId` order.
+    pub faction_bands: BTreeMap<FactionId, Vec<ExportedBand>>,
+    /// Runtime `BandId` to its scenario id.
+    pub bands: BTreeMap<BandId, String>,
+    /// Runtime herd id to its scenario id (`herd<n>`).
+    pub herds: BTreeMap<String, String>,
+}
+
+impl ExportIds {
+    pub(crate) fn band(&self, band: BandId) -> Option<&str> {
+        self.bands.get(&band).map(String::as_str)
+    }
+
+    pub(crate) fn herd(&self, runtime_id: &str) -> Option<&str> {
+        self.herds.get(runtime_id).map(String::as_str)
+    }
+
+    /// The lowest exported faction: the one a road nobody keeps is filed under.
+    pub(crate) fn first_faction(&self) -> Option<FactionId> {
+        self.faction_bands.keys().next().copied()
+    }
+}
+
+/// The scenario id of a faction's `index`-th band.
+pub(crate) fn band_scenario_id(faction: FactionId, index: usize) -> String {
+    format!(
+        "{BAND_ID_FACTION_PREFIX}{}{BAND_ID_INDEX_INFIX}{index}",
+        faction.0
+    )
+}
+
+/// The scenario id of the `index`-th herd of the export order.
+pub(crate) fn herd_scenario_id(index: usize) -> String {
+    format!("{HERD_ID_PREFIX}{index}")
+}
+
+/// The one line the `tiles` section's export says: the live world does not remember its overrides.
+const TILES_NOT_EXPORTED_NOTE: &str = "tile overrides are not exported";
+
+/// **The `world` section of the live game**: the arguments it was built from, read off the config the
+/// build wrote them into.
+fn export_world(world: &World) -> WorldSection {
+    let config = world.resource::<SimulationConfig>();
+    let archetypes = config
+        .start_profile_overrides
+        .archetypes
+        .iter()
+        .zip(
+            config
+                .start_archetype_assignment
+                .counts(config.start_profile_overrides.archetypes.len()),
+        )
+        .map(|(archetype, count)| (archetype.id.clone(), count))
+        .collect();
+    WorldSection {
+        preset: config.map_preset_id.clone(),
+        width: config.grid_size.x,
+        height: config.grid_size.y,
+        seed: config.map_seed,
+        profile: world.resource::<StartProfileLookup>().id.clone(),
+        archetypes,
+    }
+}
+
+/// **Walk the live world and write the scenario that rebuilds it** (`docs/plan_scenarios.md`
+/// section 2.10).
+///
+/// Each section module's `export` writes what its keys can say and puts the rest in `notes`; nothing
+/// live is dropped without a line. `name` is the file's stem. The world is not changed (it is `&mut`
+/// only so the herd section can build the placement query its habitat check reads).
+pub fn export_scenario(world: &mut World, name: &str) -> ScenarioExport {
+    let mut notes: Vec<String> = Vec::new();
+    let (herd_entries, herd_ids) = herds::export(world, &mut notes);
+    let world: &World = world;
+    let world_section = export_world(world);
+    let mut ids = bands::export_ids(world, &mut notes);
+    ids.herds = herd_ids;
+    let mut factions = bands::export(world, &ids, &mut notes);
+    let first_faction = ids.first_faction();
+    let exported_factions: BTreeSet<FactionId> = factions
+        .iter()
+        .map(|section| FactionId(section.faction))
+        .collect();
+    for section in &mut factions {
+        let faction = FactionId(section.faction);
+        section.bench = bench::export(world, faction, &ids);
+        section.labor = labor::export(world, faction, &ids, &mut notes);
+        let mut rungs = rungs::export_held(world, faction, &ids, &mut notes);
+        let (builds, pens) = rungs::export_builds_and_pens(world, faction, &ids, &mut notes);
+        rungs.extend(builds);
+        section.rungs = rungs;
+        section.pens = pens;
+        section.roads = roads::export(
+            world,
+            faction,
+            first_faction == Some(faction),
+            &exported_factions,
+            &ids,
+            &mut notes,
+        );
+    }
+    let deposits = deposits::export(world);
+    bands::export_unexpressed(world, &mut notes);
+    notes.push(TILES_NOT_EXPORTED_NOTE.to_string());
+    let file = ScenarioFile {
+        name: name.to_string(),
+        note: notes.join("\n"),
+        world: world_section,
+        factions,
+        tiles: Vec::new(),
+        herds: herd_entries,
+        deposits,
+    };
+    ScenarioExport { file, notes }
+}
+
 /// **What a successful load built**: the scenario ids of the bands, for the sections that name one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ScenarioApplied {
@@ -443,6 +610,57 @@ pub fn finish_scenario(
     };
     let herd_setup = world.remove_resource::<ScenarioHerdSetup>();
     let mut refusals = setup.take_refusals();
+    // **A band opens at exactly what the file says.** The build turn fed, aged and buried the bands
+    // the Startup seeding made, so each one's head-count, age shape and larder are stamped again from
+    // the file, through the seeding's own body, before anything reads them (the outfit's carry counts
+    // the larder).
+    {
+        let demographics = world.resource::<DemographicsConfigHandle>().get();
+        let mut bands = world.query::<(&BandId, &mut crate::components::PopulationCohort)>();
+        for (id, mut cohort) in bands.iter_mut(world) {
+            if let Some(entry) = setup.band_entry(*id) {
+                crate::systems::seed_scenario_band(&demographics, &mut cohort, entry);
+            }
+        }
+    }
+    // **A band the file says is led starts the leader afresh.** A big band can bank the practice for
+    // a chief on the build turn, and that chief's first pass lists every source nobody holds yet,
+    // ahead of the file's own labor rows (which would then be refused "already hunts"). So a
+    // `leader: true` band's build-turn leadership is reset to the default and the chief's orders and
+    // the rows they listed are dropped; `bands::apply_leaders` then appoints it where the labor
+    // replay can see it. A band without the key keeps whatever the build turn gave it.
+    {
+        let mut bands = world.query::<(
+            &BandId,
+            &mut crate::leadership::BandLeadership,
+            &mut crate::components::LaborAllocation,
+        )>();
+        for (id, mut leadership, mut allocation) in bands.iter_mut(world) {
+            let led_by_file = setup
+                .band_entry(*id)
+                .is_some_and(|entry| entry.leader == Some(true));
+            if !led_by_file || leadership.leader.is_none() {
+                continue;
+            }
+            *leadership = crate::leadership::BandLeadership::default();
+            let listed: Vec<_> = allocation
+                .assignments
+                .iter()
+                .filter(|row| allocation.order_of_row(&row.target).is_some())
+                .map(|row| row.target.clone())
+                .collect();
+            for target in &listed {
+                allocation.drop_source_row(target);
+            }
+            allocation.orders.clear();
+            allocation.order_rows.clear();
+            allocation.adopt_pending.clear();
+            allocation.handed_rows.clear();
+            allocation.keep_shares.clear();
+            allocation.keep_sustainable.clear();
+            allocation.unannounced_takeover.clear();
+        }
+    }
     // Herds are a setter (before the outfit replay). Every fit refusal is collected before any herd
     // or deposit is applied, so a refused file changes nothing.
     let (fitted, herd_refusals) = match &herd_setup {
@@ -477,6 +695,19 @@ pub fn finish_scenario(
             let Some(band) = setup.spawned.get(&entry.id).copied() else {
                 continue;
             };
+            // **Every scenario band that states an outfit has a window to state it in.** The game
+            // opens one Grant window per faction (its lowest band); a band the file outfits beyond
+            // that gets one of the same kind (its own carry, read live), opened here and nowhere
+            // else, so the carry gate is the window's own.
+            {
+                let mut loadout = world.resource_mut::<StartingLoadout>();
+                if !loadout.window(band).is_some_and(|window| window.open) {
+                    loadout.open(
+                        band,
+                        LoadoutWindow::opened(LoadoutSupply::Grant { carry_budget: None }),
+                    );
+                }
+            }
             let kits: Vec<KitAllocation> = outfit
                 .kits
                 .iter()
@@ -527,80 +758,97 @@ pub fn finish_scenario(
             }
         }
     }
-    // **Labor after every faction's outfit** (plan section 2.8 step 6): the outfit is an ordinary
-    // revision of the opening window, and a work row's gear is read against the outfit it ends up with.
-    if !refusals.is_empty() {
-        return Err(refusals);
-    }
-    for faction_setup in &setup.factions {
-        let faction = faction_setup.faction;
-        for (k, entry) in faction_setup.labor.iter().enumerate() {
-            let path = format!("factions[{}].labor[{k}]", faction_setup.file_index);
-            let Some(band) = setup.spawned.get(entry.band()).copied() else {
-                refusals.push(ScenarioRefusal::new(
-                    path,
-                    format!("'{}' is not a band this scenario spawned", entry.band()),
-                ));
-                return Err(refusals);
-            };
-            // The file names a herd by its scenario id; the verbs read the runtime one.
-            let Some(entry) = labor::with_runtime_herd(entry, &herds) else {
-                refusals.push(ScenarioRefusal::new(
-                    path,
-                    "the herd this entry names was not applied",
-                ));
-                return Err(refusals);
-            };
-            let entry = &entry;
-            let result = match entry {
-                LaborEntry::AssignLabor(order) => apply_assign_labor(
-                    world,
-                    faction,
-                    Some(band.0),
-                    AssignLaborOrder {
-                        role: order.role.clone(),
-                        workers: order.workers,
-                        target_x: order.target_x,
-                        target_y: order.target_y,
-                        fauna_id: order.fauna_id.clone(),
-                        species: order.species.clone(),
-                        floor: order.floor,
-                        kit_id: order.kit_id.clone(),
-                        take_species: order.take_species.clone(),
-                        move_with_herd: order.move_with_herd,
-                    },
-                ),
-                LaborEntry::WorkPriority(order) => apply_work_priority(
-                    world,
-                    faction,
-                    band.0,
-                    BuildSourceRef {
-                        target_x: order.target_x,
-                        target_y: order.target_y,
-                        herd_id: order.herd_id.clone(),
-                        material: order.material.clone(),
-                        branch: order.branch.clone(),
-                    },
-                    order.level.clone(),
-                ),
-                LaborEntry::BandOrder(order) => {
-                    let Some((action, row)) = labor::band_order_wire(order) else {
-                        refusals.push(ScenarioRefusal::new(
-                            path,
-                            "this band_order names no complete action",
-                        ));
-                        return Err(refusals);
-                    };
-                    apply_band_order(world, faction, band.0, &order.kind, action, row)
-                        .map(|_label| ())
+    // **Leaders are a setter** (a `band_order` entry needs one), applied after the outfit and auto-craft
+    // replays and immediately before labor: each of those restaffs its band, and a led band's restaff
+    // runs its chief's managing pass, which lists every source no band holds yet, ahead of the file's
+    // labor rows that hold them.
+    //
+    // **Reserve the sources the file's labor rows name** from here to the end of the labor replay, so
+    // no chief's managing pass (a leader's appointment, a restaff, a row) lists a source a later
+    // band's own row holds. The reservation is removed whichever way the replay ends.
+    world.insert_resource(labor::reservations(&setup, &herds));
+    bands::apply_leaders(world, &setup, &mut refusals);
+    let labor_replay: Result<(), ()> = 'labor: {
+        // **Labor after every faction's outfit** (plan section 2.8 step 6): the outfit is an ordinary
+        // revision of the opening window, and a work row's gear is read against the outfit it ends up with.
+        if !refusals.is_empty() {
+            break 'labor Err(());
+        }
+        for faction_setup in &setup.factions {
+            let faction = faction_setup.faction;
+            for (k, entry) in faction_setup.labor.iter().enumerate() {
+                let path = format!("factions[{}].labor[{k}]", faction_setup.file_index);
+                let Some(band) = setup.spawned.get(entry.band()).copied() else {
+                    refusals.push(ScenarioRefusal::new(
+                        path,
+                        format!("'{}' is not a band this scenario spawned", entry.band()),
+                    ));
+                    break 'labor Err(());
+                };
+                // The file names a herd by its scenario id; the verbs read the runtime one.
+                let Some(entry) = labor::with_runtime_herd(entry, &herds) else {
+                    refusals.push(ScenarioRefusal::new(
+                        path,
+                        "the herd this entry names was not applied",
+                    ));
+                    break 'labor Err(());
+                };
+                let entry = &entry;
+                let result = match entry {
+                    LaborEntry::AssignLabor(order) => apply_assign_labor(
+                        world,
+                        faction,
+                        Some(band.0),
+                        AssignLaborOrder {
+                            role: order.role.clone(),
+                            workers: order.workers,
+                            target_x: order.target_x,
+                            target_y: order.target_y,
+                            fauna_id: order.fauna_id.clone(),
+                            species: order.species.clone(),
+                            floor: order.floor,
+                            kit_id: order.kit_id.clone(),
+                            take_species: order.take_species.clone(),
+                            move_with_herd: order.move_with_herd,
+                        },
+                    ),
+                    LaborEntry::WorkPriority(order) => apply_work_priority(
+                        world,
+                        faction,
+                        band.0,
+                        BuildSourceRef {
+                            target_x: order.target_x,
+                            target_y: order.target_y,
+                            herd_id: order.herd_id.clone(),
+                            material: order.material.clone(),
+                            branch: order.branch.clone(),
+                        },
+                        order.level.clone(),
+                    ),
+                    LaborEntry::BandOrder(order) => {
+                        let Some((action, row)) = labor::band_order_wire(order) else {
+                            refusals.push(ScenarioRefusal::new(
+                                path,
+                                "this band_order names no complete action",
+                            ));
+                            break 'labor Err(());
+                        };
+                        apply_band_order(world, faction, band.0, &order.kind, action, row)
+                            .map(|_label| ())
+                    }
+                };
+                if let Err(refusal) = result {
+                    // **A refused entry stops the load there**: later rows may stand on this one.
+                    refusals.push(ScenarioRefusal::new(path, refusal.to_string()));
+                    break 'labor Err(());
                 }
-            };
-            if let Err(refusal) = result {
-                // **A refused entry stops the load there**: later rows may stand on this one.
-                refusals.push(ScenarioRefusal::new(path, refusal.to_string()));
-                return Err(refusals);
             }
         }
+        Ok(())
+    };
+    world.remove_resource::<ScenarioLaborReservations>();
+    if labor_replay.is_err() {
+        return Err(refusals);
     }
     // **Builds after labor** (plan section 2.8 step 6): a declared build needs a band already
     // working its source, which the labor rows put there. A refused build stops the load there.

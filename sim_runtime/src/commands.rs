@@ -735,7 +735,14 @@ pub enum CommandPayload {
         request_id: u64,
         path: String,
     },
-    /// **DEV: list the scenario files and the scenario file's JSON Schema.** Proto field 102.
+    /// **DEV: write the live world out as a scenario file** (`docs/plan_scenarios.md` section 2.10).
+    /// Proto field 102. Changes no world, so it is not replayable; answered with a
+    /// [`QueryReply::ScenarioOp`]. A relative `path` resolves under the server's `SIM_SCENARIO_DIR`.
+    ExportScenario {
+        request_id: u64,
+        path: String,
+    },
+    /// **DEV: list the scenario files and the scenario file's JSON Schema.** Proto field 103.
     /// Answered with a [`QueryReply::ScenarioOp`] (`files`, `schema`); not replayable.
     ListScenarios {
         request_id: u64,
@@ -746,7 +753,7 @@ pub enum CommandPayload {
         request_id: u64,
         path: String,
     },
-    /// **DEV: write one scenario file, only if it would load.** Proto field 104. The server parses
+    /// **DEV: write one scenario file, only if it would load.** Proto field 105. The server parses
     /// `text` and builds a trial world from it, dropped; zero refusals writes it byte for byte, and
     /// otherwise nothing is written and the refusals are the answer. The live world is never touched.
     /// Answered with a [`QueryReply::ScenarioOp`]; not replayable.
@@ -1335,8 +1342,11 @@ pub struct ScenarioOpReply {
     pub ok: bool,
     /// Echoes the path asked for.
     pub path: String,
-    /// Empty when `ok`; otherwise one `<path in the file>: <reason>` line per refusal.
+    /// Empty when `ok`; otherwise one `<path in the file>: <reason>` line per refusal. On an export
+    /// that was written: what the file's own pass 1 refused (the file is written regardless).
     pub refusals: Vec<String>,
+    /// An export only: what the live world holds that the file cannot say, one line each.
+    pub notes: Vec<String>,
     /// `list_scenarios` only: the scenario directory's `*.json` files, sorted, as paths the other
     /// verbs accept. Empty otherwise.
     pub files: Vec<String>,
@@ -2798,6 +2808,12 @@ impl CommandEnvelope {
                     path: path.clone(),
                 })
             }
+            CommandPayload::ExportScenario { request_id, path } => {
+                pb::command_envelope::Command::ExportScenario(pb::ExportScenarioCommand {
+                    request_id: *request_id,
+                    path: path.clone(),
+                })
+            }
             CommandPayload::WriteScenario {
                 request_id,
                 path,
@@ -3143,6 +3159,10 @@ impl CommandEnvelope {
                 request_id: cmd.request_id,
                 path: cmd.path,
                 text: cmd.text,
+            },
+            pb::command_envelope::Command::ExportScenario(cmd) => CommandPayload::ExportScenario {
+                request_id: cmd.request_id,
+                path: cmd.path,
             },
             pb::command_envelope::Command::SetStartingLoadout(cmd) => {
                 CommandPayload::SetStartingLoadout {
@@ -3873,6 +3893,7 @@ impl QueryReplyEnvelope {
                     ok: reply.ok,
                     path: reply.path.clone(),
                     refusals: reply.refusals.clone(),
+                    notes: reply.notes.clone(),
                     files: reply.files.clone(),
                     text: reply.text.clone(),
                     schema: reply.schema.clone(),
@@ -4056,6 +4077,7 @@ impl QueryReplyEnvelope {
                     ok: reply.ok,
                     path: reply.path,
                     refusals: reply.refusals,
+                    notes: reply.notes,
                     files: reply.files,
                     text: reply.text,
                     schema: reply.schema,
@@ -5016,6 +5038,10 @@ mod tests {
                 request_id: 17,
                 path: "core_sim/scenarios/a.json".to_string(),
                 text: "{\n  \"name\": \"a\"\n}\n".to_string(),
+            },
+            CommandPayload::ExportScenario {
+                request_id: 18,
+                path: "out.json".to_string(),
             },
         ] {
             let envelope = CommandEnvelope {

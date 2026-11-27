@@ -25,7 +25,7 @@
 
 use std::collections::BTreeMap;
 
-use bevy::prelude::World;
+use bevy::prelude::{Resource, World};
 
 use crate::components::{BandId, LaborAllocation, LaborTarget, PopulationCohort};
 use crate::keep_on_hand::source_key;
@@ -38,6 +38,29 @@ pub fn take_source_key(target: &LaborTarget) -> Option<String> {
             source_key(target)
         }
         _ => None,
+    }
+}
+
+/// **THE SOURCES A SCENARIO FILE'S LABOR ROWS NAME, while the loader replays them**: source key to the
+/// band (and its people) whose row it is. Present only inside `scenario::finish_scenario`, from the
+/// leaders' appointment to the end of the labor replay. A chief's managing pass reads it through
+/// [`SourceHolders::with_reservations`] and treats a source reserved by a different band as held, so
+/// a chief appointed early never lists what a later band's own file row is about to hold. Explicit
+/// rows and `assign_labor`'s own refusal ([`other_band_working`]) never read it.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct ScenarioLaborReservations {
+    by_key: BTreeMap<String, (BandId, FactionId)>,
+}
+
+impl ScenarioLaborReservations {
+    /// Reserve `key` for `band` of `faction`; the first band to name a source keeps it.
+    pub fn reserve(&mut self, key: String, band: BandId, faction: FactionId) {
+        self.by_key.entry(key).or_insert((band, faction));
+    }
+
+    /// Whether anything is reserved.
+    pub fn is_empty(&self) -> bool {
+        self.by_key.is_empty()
     }
 }
 
@@ -75,6 +98,21 @@ impl SourceHolders {
             let allocation = entity.get::<LaborAllocation>()?;
             Some((entity.get::<BandId>().copied(), cohort.faction, allocation))
         }))
+    }
+
+    /// These holdings plus the sources a scenario load has reserved (a reservation is a player row of
+    /// the reserving band). The world's own holdings are unchanged where no reservation is present.
+    pub fn with_reservations(mut self, world: &World) -> Self {
+        if let Some(reserved) = world.get_resource::<ScenarioLaborReservations>() {
+            for (key, (band, faction)) in &reserved.by_key {
+                self.by_key.entry(key.clone()).or_default().push(Holder {
+                    band: *band,
+                    faction: *faction,
+                    listed: false,
+                });
+            }
+        }
+        self
     }
 
     /// Replace `band`'s entries with what `allocation` holds now.

@@ -113,7 +113,6 @@ fn pass_one_collects_every_refusal_in_one_go() {
         "factions[0].bands[0].outfit.kits.none",
         "factions[0].bands[0].outfit.materials.unobtainium",
         "factions[0].bands[1].id",
-        "factions[0].bands[1].outfit",
         "factions[1].faction",
         "factions[1].bands",
     ] {

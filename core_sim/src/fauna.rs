@@ -2489,8 +2489,27 @@ pub(crate) fn suitable_tiles_by_module(
     by_module
 }
 
+/// One herd worldgen spawned: its runtime id, species display name and spawn tile (the first step of
+/// its route).
+#[derive(Debug, Clone)]
+pub struct WorldgenHerdRecord {
+    pub id: String,
+    pub species: String,
+    pub spawn: UVec2,
+}
+
+/// **Every herd `spawn_initial_herds` made, as it made them** - the record a scenario export reads to
+/// find a worldgen herd that has since died out (the registry no longer holds it, and a reload would
+/// spawn it again). Written once by the fresh-spawn branch; absent on a world whose herds were
+/// restored from a save, which never ran the spawn. Never part of `SimState`, a save or a snapshot.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct WorldgenHerdRoster {
+    pub herds: Vec<WorldgenHerdRecord>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_initial_herds(
+    mut commands: Commands,
     mut registry: ResMut<HerdRegistry>,
     mut telemetry: ResMut<HerdTelemetry>,
     mut density: ResMut<HerdDensityMap>,
@@ -2577,6 +2596,20 @@ pub fn spawn_initial_herds(
         root,
     );
 
+    commands.insert_resource(WorldgenHerdRoster {
+        herds: herds
+            .iter()
+            .map(|herd| WorldgenHerdRecord {
+                id: herd.id.clone(),
+                species: herd.species.clone(),
+                spawn: herd
+                    .route
+                    .first()
+                    .copied()
+                    .unwrap_or_else(|| herd.position()),
+            })
+            .collect(),
+    });
     registry.herds = herds;
     telemetry.entries = registry.snapshot_entries(&ladder);
     density.rebuild(config.grid_size, &registry);

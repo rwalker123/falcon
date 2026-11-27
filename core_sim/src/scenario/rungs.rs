@@ -20,11 +20,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::bands::{FactionSection, FactionSetup};
 use super::herds::HerdEntry;
-use super::{ScenarioContext, ScenarioRefusal};
+use super::{round_export, ExportIds, ScenarioContext, ScenarioRefusal};
 use crate::command_seam::SOURCE_NAMED_NOT_ASSIGNED;
 use crate::command_seam::{apply_build_rung, BuildRungRequest};
 use crate::components::{BandId, LaborTarget, TakeSelection};
@@ -45,7 +45,7 @@ use crate::{
 };
 
 /// One entry of a faction's `rungs` list.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RungEntry {
     /// A source already holding a rung.
@@ -55,38 +55,48 @@ pub enum RungEntry {
 }
 
 /// A source held at a rung. Which fields it needs follows the rung's branch's source kind.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HeldRung {
     /// A rung id as the ladder spells it, `plant:tended`.
     pub rung: String,
     /// The tile, for a patch or a working.
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(extend("x-pick" = "tile"))]
     pub at: Option<[u32; 2]>,
     /// The herd id, for a herd.
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(extend("x-pick" = "herd"))]
     pub herd: Option<String>,
     /// The material, for a working.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,
     /// The crop a patch is committed to, where a rung on the chain `requires_crop`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub species: Option<String>,
 }
 
 /// `CommandPayload::BuildRung`, with no faction (the section's own) and the band named by its
 /// scenario id.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(extend("x-pick-tile" = ["target_x", "target_y"]))]
 pub struct BuildRungEntry {
     /// The keeper band's scenario id.
     #[schemars(extend("x-pick" = "band"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub band: Option<String>,
     pub verb: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_x: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub target_y: Option<u32>,
     #[schemars(extend("x-pick" = "herd"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub herd_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
 }
 
@@ -599,6 +609,232 @@ fn write_completion(
         }
     }
     Ok(())
+}
+
+/// The held rung of a source, when it is above its branch's root: every source holds its root, and a
+/// scenario cannot hold it twice.
+fn held_above_root(ladder: &LadderConfig, standing: &crate::intensification::RungStanding) -> bool {
+    ladder.rung_by_id(standing.held).is_some_and(|def| {
+        ladder
+            .root_of(def.branch)
+            .is_some_and(|root| def.order > root.order)
+    })
+}
+
+/// **The held rungs of one faction**, as `held` entries: its patches (with the crop they are committed
+/// to), its herds, and the workings it has a crew row on. Patches by `(y, x)`, herds in export order,
+/// workings by `(x, y, material)`. A working has no owner, so it is the faction whose band works it.
+pub(super) fn export_held(
+    world: &World,
+    faction: FactionId,
+    ids: &ExportIds,
+    notes: &mut Vec<String>,
+) -> Vec<RungEntry> {
+    let ladder = world.resource::<LadderConfigHandle>().get();
+    let mut entries = Vec::new();
+    let mut patches: Vec<(UVec2, &crate::forage::ForagePatch)> = world
+        .resource::<ForageRegistry>()
+        .patches
+        .iter()
+        .filter(|(_, patch)| patch.owner == Some(faction))
+        .map(|(tile, patch)| (*tile, patch))
+        .collect();
+    patches.sort_by_key(|(tile, _)| (tile.y, tile.x));
+    for (tile, patch) in patches {
+        let standing = patch.standing();
+        if held_above_root(&ladder, &standing) {
+            entries.push(RungEntry::Held(HeldRung {
+                rung: standing.held.wire_key(),
+                at: Some([tile.x, tile.y]),
+                herd: None,
+                material: None,
+                species: patch.species.clone(),
+            }));
+        }
+    }
+    let mut herds: Vec<(&str, &crate::fauna::Herd)> = world
+        .resource::<HerdRegistry>()
+        .herds
+        .iter()
+        .filter(|herd| herd.owner == Some(faction))
+        .filter_map(|herd| Some((ids.herd(&herd.id)?, herd)))
+        .collect();
+    herds.sort_by_key(|(scenario_id, _)| {
+        scenario_id
+            .trim_start_matches(super::HERD_ID_PREFIX)
+            .parse::<usize>()
+            .unwrap_or(usize::MAX)
+    });
+    for (scenario_id, herd) in herds {
+        let standing = herd.standing();
+        if held_above_root(&ladder, &standing) {
+            entries.push(RungEntry::Held(HeldRung {
+                rung: standing.held.wire_key(),
+                at: None,
+                herd: Some(scenario_id.to_string()),
+                material: None,
+                species: None,
+            }));
+        }
+    }
+    let worked: BTreeSet<(u32, u32, String)> = ids
+        .faction_bands
+        .get(&faction)
+        .into_iter()
+        .flatten()
+        .filter_map(|band| world.get::<crate::components::LaborAllocation>(band.entity))
+        .flat_map(|allocation| allocation.assignments.iter())
+        .filter_map(|row| match &row.target {
+            LaborTarget::Extract { tile, material, .. } => Some((tile.x, tile.y, material.clone())),
+            _ => None,
+        })
+        .collect();
+    for (key, source) in &world.resource::<DepositRegistry>().sources {
+        if worked.contains(key) && held_above_root(&ladder, source.standing()) {
+            entries.push(RungEntry::Held(HeldRung {
+                rung: source.rung().wire_key(),
+                at: Some([key.0, key.1]),
+                herd: None,
+                material: Some(key.2.clone()),
+                species: None,
+            }));
+        }
+    }
+    let _ = notes;
+    entries
+}
+
+/// **The declared builds of one faction, and its pen verbs in flight.**
+///
+/// A climb declared on a patch, herd, working, road, tile or band improvement is a `build_rung` entry
+/// (deduplicated across the bands the declaration is queued on, the first band in `BandId` order
+/// naming a road or a band improvement). A pen ring in flight is an `extend_pen` and an output
+/// commitment in flight a `set_herd_output` at its target share. A finished ring or commitment has
+/// no key: it is noted.
+pub(super) fn export_builds_and_pens(
+    world: &World,
+    faction: FactionId,
+    ids: &ExportIds,
+    notes: &mut Vec<String>,
+) -> (Vec<RungEntry>, Vec<super::pens::PenEntry>) {
+    use super::pens::{ExtendPenEntry, PenEntry, SetHerdOutputEntry};
+    use crate::components::{BuildJob, BuildSource, LaborAllocation};
+    let ladder = world.resource::<LadderConfigHandle>().get();
+    let mut builds = Vec::new();
+    let mut pens: Vec<PenEntry> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for band in ids.faction_bands.get(&faction).into_iter().flatten() {
+        let Some(allocation) = world.get::<LaborAllocation>(band.entity) else {
+            continue;
+        };
+        for declaration in &allocation.builds {
+            let key = format!("{:?}/{:?}", declaration.source, declaration.declared);
+            if !seen.insert(key) {
+                continue;
+            }
+            match declaration.declared {
+                BuildJob::Climb(rung) => {
+                    let Some(verb) = ladder.rung_by_id(rung).and_then(|def| def.verb.clone())
+                    else {
+                        continue;
+                    };
+                    let mut entry = BuildRungEntry {
+                        band: None,
+                        verb,
+                        target_x: None,
+                        target_y: None,
+                        herd_id: None,
+                        material: None,
+                        branch: None,
+                    };
+                    match &declaration.source {
+                        BuildSource::Patch(tile) | BuildSource::Tile { tile, .. } => {
+                            entry.target_x = Some(tile.x);
+                            entry.target_y = Some(tile.y);
+                        }
+                        BuildSource::Herd(id) => match ids.herd(id) {
+                            Some(scenario_id) => entry.herd_id = Some(scenario_id.to_string()),
+                            None => {
+                                notes.push(format!(
+                                    "a build declared on herd {id}, which is not exported, is left out"
+                                ));
+                                continue;
+                            }
+                        },
+                        BuildSource::Road(tile) => {
+                            entry.band = Some(band.scenario_id.clone());
+                            entry.target_x = Some(tile.x);
+                            entry.target_y = Some(tile.y);
+                        }
+                        BuildSource::Deposit { tile, material } => {
+                            entry.target_x = Some(tile.x);
+                            entry.target_y = Some(tile.y);
+                            entry.material = Some(material.clone());
+                        }
+                        BuildSource::Band { band: held_by, .. } => match ids.band(*held_by) {
+                            Some(scenario_id) => entry.band = Some(scenario_id.to_string()),
+                            None => {
+                                notes.push(format!(
+                                    "a build declared on band {}, which is not exported, is left out",
+                                    held_by.0
+                                ));
+                                continue;
+                            }
+                        },
+                    }
+                    builds.push(RungEntry::BuildRung(entry));
+                }
+                BuildJob::ExtendPen | BuildJob::SetHerdOutput(_) => {
+                    let BuildSource::Herd(id) = &declaration.source else {
+                        continue;
+                    };
+                    let Some(scenario_id) = ids.herd(id) else {
+                        notes.push(format!(
+                            "a pen build declared on herd {id}, which is not exported, is left out"
+                        ));
+                        continue;
+                    };
+                    if declaration.declared == BuildJob::ExtendPen {
+                        pens.push(PenEntry::ExtendPen(ExtendPenEntry {
+                            herd: scenario_id.to_string(),
+                        }));
+                    } else if let Some(target) = world
+                        .resource::<HerdRegistry>()
+                        .find(id)
+                        .and_then(|herd| herd.standing_output_target)
+                    {
+                        pens.push(PenEntry::SetHerdOutput(SetHerdOutputEntry {
+                            herd: scenario_id.to_string(),
+                            fraction: round_export(target),
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    for herd in &world.resource::<HerdRegistry>().herds {
+        if herd.owner != Some(faction) {
+            continue;
+        }
+        let Some(scenario_id) = ids.herd(&herd.id) else {
+            continue;
+        };
+        if herd.pen_radius > 0 {
+            notes.push(format!(
+                "{scenario_id}: its pen is {} ring(s) wide, which a scenario cannot say (an \
+                 extend_pen starts one ring)",
+                herd.pen_radius
+            ));
+        }
+        if herd.standing_output_fraction > 0.0 {
+            notes.push(format!(
+                "{scenario_id}: {:.2} of it stands committed to milk, eggs and wool, which a \
+                 scenario cannot say (a set_herd_output starts one commitment)",
+                herd.standing_output_fraction
+            ));
+        }
+    }
+    (builds, pens)
 }
 
 /// **Pass 2, step 6: the `build_rung` entries**, one faction's worth, in file order, through the

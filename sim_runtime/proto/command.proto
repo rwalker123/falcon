@@ -1131,7 +1131,17 @@ message LoadScenarioCommand {
   string path = 2;
 }
 
-// The answer to a `load_scenario`.
+// DEV: write the live world out as a scenario file (docs/plan_scenarios.md section 2.10). Dev-only:
+// nothing in the New Game screen or the main menu sends it. Changes no world. Answered with
+// `ScenarioOpReply`.
+message ExportScenarioCommand {
+  uint64 request_id = 1;
+  // REQUIRED. A relative path resolves under the server's `SIM_SCENARIO_DIR` (default `./scenarios`);
+  // an absolute path is used as it is.
+  string path = 2;
+}
+
+// The answer to a `load_scenario` or an `export_scenario`.
 message ScenarioOpReply {
   bool ok = 1;
   // Echoes the path asked for.
@@ -1139,14 +1149,16 @@ message ScenarioOpReply {
   // Empty when `ok`. Otherwise one line per refusal, `<path in the file>: <reason>`; the whole list
   // of a file's problems rides one reply. A refused load builds nothing: the previous world stays.
   repeated string refusals = 3;
+  // An export only: one line per thing the live world holds that the file cannot say. Empty on a load.
+  repeated string notes = 4;
   // `list_scenarios` only (empty otherwise): the `*.json` files in the scenario directory, sorted, each
   // spelled as a path `read_scenario` and `write_scenario` accept (`core_sim/scenarios/<name>.json`).
-  repeated string files = 4;
+  repeated string files = 5;
   // `read_scenario` only (empty otherwise): the file's contents, verbatim.
-  string text = 5;
+  string text = 6;
   // `list_scenarios` only (empty otherwise): the scenario file's JSON Schema, as a JSON string,
   // generated from the structs the loader deserializes.
-  string schema = 6;
+  string schema = 7;
 }
 
 // DEV: list the scenario files and the scenario file's JSON Schema. Answered with `ScenarioOpReply`
@@ -1998,8 +2010,11 @@ message CommandEnvelope {
     TribeOrderCommand tribe_order = 100;
     // 100 is held by `tribe_order`, so the dev scenario loader takes 101 (append-only).
     LoadScenarioCommand load_scenario = 101;
-    ListScenariosCommand list_scenarios = 102;
-    ReadScenarioCommand read_scenario = 103;
-    WriteScenarioCommand write_scenario = 104;
+    // 101 is held by `load_scenario`, so the dev scenario exporter takes 102 (append-only).
+    ExportScenarioCommand export_scenario = 102;
+    // 102 is held by `export_scenario`, so the dev Workbench's file verbs take 103-105 (append-only).
+    ListScenariosCommand list_scenarios = 103;
+    ReadScenarioCommand read_scenario = 104;
+    WriteScenarioCommand write_scenario = 105;
   }
 }

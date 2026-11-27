@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::bands::{FactionSection, FactionSetup};
 use super::herds::HerdEntry;
@@ -23,7 +23,7 @@ use crate::command_seam::{apply_extend_pen, apply_set_herd_output, WHOLE_HERD_CO
 use crate::{HerdRegistry, NO_STANDING_COMMITMENT};
 
 /// One pen entry, tagged by its verb: `{ "extend_pen": { "herd": "sheep" } }`.
-#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PenEntry {
     ExtendPen(ExtendPenEntry),
@@ -31,7 +31,7 @@ pub enum PenEntry {
 }
 
 /// `CommandPayload::ExtendPen`, naming the herd rather than the pen's tile.
-#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExtendPenEntry {
     /// The herd's scenario id.
@@ -40,7 +40,7 @@ pub struct ExtendPenEntry {
 }
 
 /// `CommandPayload::SetHerdOutput`, naming the herd by its scenario id.
-#[derive(Debug, Clone, PartialEq, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetHerdOutputEntry {
     /// The herd's scenario id.
