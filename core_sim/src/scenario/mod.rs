@@ -70,6 +70,7 @@ use crate::start_profile::{
 use crate::starting_loadout::{
     KitAllocation, LoadoutSupply, LoadoutWindow, MaterialAllocation, StartingLoadout,
 };
+use crate::telling::{BeatCatalogHandle, BeatLedger};
 use crate::world_roster::{apply_start_profile, seed_faction_roster};
 use crate::{faction_start_land_fraction, granted_archetype_counts};
 
@@ -284,6 +285,21 @@ pub struct ScenarioFile {
     pub herds: Vec<HerdEntry>,
     /// World state, not a faction's: a deposit has no owner.
     pub deposits: Vec<DepositEntry>,
+    /// Optional, default `true` (the game's own new-game opening). `false` = the scenario opens
+    /// mid-game: no band holds an open outfitting window, and the Telling's game-opening beats (the
+    /// ones its catalog marks `opening`) never fire. A file that also states a band `outfit` is
+    /// refused, since an outfit is stated in that window.
+    #[serde(default = "default_opening", skip_serializing_if = "is_true")]
+    pub opening: bool,
+}
+
+/// The default of [`ScenarioFile::opening`]: a scenario opens like a new game.
+fn default_opening() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 /// The `new_game` arguments, every one required.
@@ -423,6 +439,19 @@ pub fn parse_scenario(
             requested_counts = counts;
         }
     }
+    if !file.opening {
+        for (i, faction) in file.factions.iter().enumerate() {
+            for (j, band) in faction.bands.iter().enumerate() {
+                if band.outfit.is_some() {
+                    refusals.push(ScenarioRefusal::new(
+                        format!("factions[{i}].bands[{j}].outfit"),
+                        "an outfit is stated in the opening outfitting window, and `opening: false` \
+                         means the scenario has none",
+                    ));
+                }
+            }
+        }
+    }
     bands::check(&file.factions, ctx, &mut refusals);
     bench::check(&file.factions, ctx, &mut refusals);
     tribes::check(&file.factions, &mut refusals);
@@ -486,8 +515,22 @@ pub fn build_scenario_world(
     app.insert_resource(ScenarioHerdSetup {
         herds: plan.file.herds.clone(),
     });
+    // **A mid-game scenario never tells the opening.** The beats are retired in the ledger BEFORE the
+    // build turn, because the Telling runs on that turn; a ledger entry also survives a save.
+    if !plan.file.opening {
+        let catalog = app.world.resource::<BeatCatalogHandle>().get();
+        app.world
+            .resource_mut::<BeatLedger>()
+            .retire_opening_beats(&catalog);
+    }
     run_turn(app);
-    finish_scenario(&mut app.world, &plan.file.deposits)
+    let applied = finish_scenario(&mut app.world, &plan.file.deposits)?;
+    // The build pass opened the spawned bands' windows (and committed their default outfits); a
+    // mid-game scenario closes them as the first turn advance would.
+    if !plan.file.opening {
+        app.world.resource_mut::<StartingLoadout>().close_all();
+    }
+    Ok(applied)
 }
 
 /// **How many decimal places an exported float keeps** (ages, larders, a herd's stock, a floor).
@@ -655,6 +698,7 @@ pub fn export_scenario(world: &mut World, name: &str) -> ScenarioExport {
         tiles: Vec::new(),
         herds: herd_entries,
         deposits,
+        opening: true,
     };
     ScenarioExport { file, notes }
 }

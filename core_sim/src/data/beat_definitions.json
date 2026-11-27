@@ -43,7 +43,8 @@
       "turn.index",
       "band.count"
     ],
-    "once": true
+    "once": true,
+    "opening": true
   },
   {
     "id": "guidance.food_and_the_split",
@@ -74,7 +75,8 @@
       "provisions.total",
       "band.count"
     ],
-    "once": true
+    "once": true,
+    "opening": true
   },
   {
     "id": "discovery.site_found",

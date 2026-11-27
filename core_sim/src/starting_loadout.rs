@@ -403,6 +403,14 @@ impl StartingLoadout {
         self.windows.remove(&band).is_some()
     }
 
+    /// **Shut every window** (a closed window is an absent one), returning how many were open.
+    /// The one body of [`close_opening_window`] and of a mid-game scenario's load.
+    pub fn close_all(&mut self) -> usize {
+        let open = self.open_count();
+        self.windows.clear();
+        open
+    }
+
     /// Every window, in band order.
     pub fn iter(&self) -> impl Iterator<Item = (BandId, &LoadoutWindow)> {
         self.windows.iter().map(|(band, window)| (*band, window))
@@ -547,7 +555,7 @@ pub enum LoadoutRejection {
 /// client first draws. The player has not advanced anything yet at that point, so shutting the
 /// window there would close it before the map it is composed against had ever been seen. Every
 /// later update is a turn the player asked for.
-const WORLD_BUILD_TICK: u64 = 0;
+pub const WORLD_BUILD_TICK: u64 = 0;
 
 /// **Run condition: this is the world-build pass** — the one `app.update()` that builds a world,
 /// before the player has advanced anything.
@@ -569,13 +577,12 @@ pub fn close_opening_window(
     if tick.0 == WORLD_BUILD_TICK {
         return;
     }
-    let closed = loadout.open_count();
-    if closed == 0 && loadout.windows.is_empty() {
+    if loadout.windows.is_empty() {
         return;
     }
     // A closed window is an ABSENT one — see [`StartingLoadout`]. Dropping the rows is what keeps
     // the checkpoint from growing a permanent entry per band ever split.
-    loadout.windows.clear();
+    let closed = loadout.close_all();
     if closed > 0 {
         info!(
             target: "shadow_scale::campaign",

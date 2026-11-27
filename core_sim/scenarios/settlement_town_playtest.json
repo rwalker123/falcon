@@ -1,5 +1,6 @@
 {
   "name": "settlement_town_playtest",
+  "opening": false,
   "note": "A village tribe of three kin bands under chiefs (450 people, three tiles apart) a storage pit short of a town: Rushford (home) has released its food order and crews the pit at (13, 10) with its own hands, and every band works the food around its camp (the home band forages (12, 13) and hunts the boar; east hunts fowl and forages (18, 12); south hunts sheep and forages (14, 14)). The pit opens 25 work in, and the tribe becomes a Town about turn 5.",
   "world": {
     "preset": "earthlike",

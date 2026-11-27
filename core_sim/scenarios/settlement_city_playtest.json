@@ -1,5 +1,6 @@
 {
   "name": "settlement_city_playtest",
+  "opening": false,
   "note": "A town tribe of ten kin bands under chiefs (1500 people, three tiles apart) a granary short of a city: the storage pit at (13, 10) is held, Rushford (home) has released its food order and crews the granary with its own hands (105 of 120 work done), every band works the food around its camp (forage and hunt rows on nearby sites and herds), the larders hold over 1500 food and the dead buried at (13, 11) stand at 40 belief. The tribe becomes a City about turn 4 and holds it.",
   "world": {
     "preset": "earthlike",

@@ -8,8 +8,8 @@ use bevy::prelude::*;
 use core_sim::scenario::{build_scenario_world, parse_scenario, ScenarioContext, ScenarioRefusal};
 use core_sim::{
     build_test_app, run_turn, BandId, BranchId, CommandEventKind, CommandEventLog,
-    PopulationCohort, SettlementStageConfigHandle, SettlementStages, TileImprovementRegistry,
-    TribeRegistry,
+    PopulationCohort, SettlementStageConfigHandle, SettlementStages, StartingLoadout,
+    TileImprovementRegistry, TribeRegistry,
 };
 use serde_json::{json, Value};
 
@@ -261,4 +261,80 @@ fn a_builds_progress_is_refused_where_it_means_nothing() {
     file["factions"][0]["rungs"][1]["build_rung"]["verb"] = json!("cultivate");
     file["factions"][0]["rungs"][1]["build_rung"]["progress"] = json!(5.0);
     assert!(refusal_paths(&file.to_string()).contains(&path));
+}
+
+/// Every Telling beat the feed holds, as `(label, gloss)`.
+fn narrative_beats(app: &App) -> Vec<(String, String)> {
+    app.world
+        .resource::<CommandEventLog>()
+        .iter()
+        .filter(|e| e.kind == CommandEventKind::NarrativeBeat)
+        .map(|e| (e.label.clone(), e.detail.clone().unwrap_or_default()))
+        .collect()
+}
+
+/// The game-opening lines: the walk-out beat (glossed by `turn.index`) and the guidance that ends on
+/// the outfitting window.
+fn opening_lines(app: &App) -> Vec<String> {
+    narrative_beats(app)
+        .into_iter()
+        .filter(|(label, gloss)| {
+            gloss.contains("turn.index=")
+                || label.contains("choose what we carry")
+                || label.contains("pick what we're taking")
+        })
+        .map(|(label, _)| label)
+        .collect()
+}
+
+#[test]
+fn a_settlement_scenario_opens_mid_game_with_no_outfitting_window_and_no_opening_beats() {
+    for text in [TOWN, CITY] {
+        let mut app = load(text);
+        for _ in 0..3 {
+            run_turn(&mut app);
+        }
+        assert_eq!(
+            app.world.resource::<StartingLoadout>().open_count(),
+            0,
+            "no band holds an open outfitting window"
+        );
+        assert!(
+            opening_lines(&app).is_empty(),
+            "no game-opening beat: {:?}",
+            opening_lines(&app)
+        );
+    }
+}
+
+#[test]
+fn opening_true_keeps_the_window_and_the_opening_beats() {
+    let mut file: Value = serde_json::from_str(TOWN).unwrap();
+    file["opening"] = json!(true);
+    let mut app = load(&file.to_string());
+    assert!(
+        app.world.resource::<StartingLoadout>().open_count() > 0,
+        "the opening window stands at load"
+    );
+    run_turn(&mut app);
+    assert!(
+        !opening_lines(&app).is_empty(),
+        "the opening beats tell as in a new game"
+    );
+}
+
+#[test]
+fn a_file_that_opens_mid_game_and_states_an_outfit_is_refused_with_a_path() {
+    let mut file: Value = serde_json::from_str(TOWN).unwrap();
+    file["factions"][0]["bands"][0]["outfit"] = json!({ "kits": {}, "materials": {} });
+    file["opening"] = json!(false);
+    let Err(refusals) = try_load(&file.to_string()) else {
+        panic!("an outfit with no opening window must be refused");
+    };
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(refusals[0].path, "factions[0].bands[0].outfit");
+    assert!(
+        refusals[0].reason.contains("opening: false"),
+        "{refusals:?}"
+    );
 }

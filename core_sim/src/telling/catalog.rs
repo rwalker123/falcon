@@ -200,6 +200,10 @@ pub struct BeatDefinition {
     pub cooldown_turns: Option<u32>,
     #[serde(default)]
     pub once: bool,
+    /// **A game-opening beat**: it tells the walk-out and the outfitting window a new game opens on.
+    /// A scenario that opens mid-game (`opening: false`) retires every beat marked so.
+    #[serde(default)]
+    pub opening: bool,
 }
 
 impl BeatDefinition {

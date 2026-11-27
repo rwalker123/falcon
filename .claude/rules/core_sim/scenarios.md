@@ -136,6 +136,15 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   `factions[i].bands[j].outfit` as it does a first.
 - `finish_scenario` then replays `outfit` as `SetStartingLoadout` through `command_seam`, which
   **replaces** the default while the opening window is still open.
+- **`opening` (optional top-level bool, default `true`) says whether the scenario opens like a new game.**
+  `false` opens it mid-game: `build_scenario_world` retires every beat the Telling catalog marks
+  `opening` (`BeatLedger::retire_opening_beats`, before the build turn, since the Telling runs on it;
+  a `once` ledger entry also holds across a save), and after `finish_scenario` closes every outfitting
+  window through `StartingLoadout::close_all` (the body `close_opening_window` runs), leaving the
+  default outfit the world-build pass committed. A file with `opening: false` and a band `outfit` is
+  refused at that band's `factions[i].bands[j].outfit`, since the outfit is stated in the window it
+  has none of. The export omits the key when `true`. Both settlement playtest scenarios set it
+  `false`.
 - `finish_scenario` then replays each band's `auto_craft: true` through
   `command_seam::apply_set_auto_craft` (after the outfit, before labor). A refusal stops the load at
   `factions[i].bands[j].auto_craft`.

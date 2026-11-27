@@ -494,6 +494,21 @@ impl BeatLedger {
             .collect()
     }
 
+    /// **Retire every beat the catalog marks `opening`**: record each as fired at the world-build
+    /// tick so its `once` guard holds and it never lands. Returns the ids retired.
+    pub fn retire_opening_beats(&mut self, catalog: &BeatCatalog) -> Vec<String> {
+        let ids: Vec<String> = catalog
+            .beats()
+            .iter()
+            .filter(|beat| beat.opening)
+            .map(|beat| beat.id.clone())
+            .collect();
+        for id in &ids {
+            self.mark_fired(id, crate::starting_loadout::WORLD_BUILD_TICK);
+        }
+        ids
+    }
+
     fn mark_fired(&mut self, beat: &str, tick: u64) {
         self.fired.entry(beat.to_string()).or_default().push(tick);
     }

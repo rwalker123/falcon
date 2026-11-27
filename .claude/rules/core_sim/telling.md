@@ -17,7 +17,7 @@ paths:
 
 | File | Purpose |
 |------|---------|
-| `src/data/beat_definitions.json` | **The Telling** beat catalog — the narrative *content* layer and the mod surface (see "The Telling"). One entry per beat: `id`, `tier` (`ambient`\|`beat`\|`fork`), `soul`, `when` (the predicate grammar), `nouns` (slot → resolver, with `fallback`), `wardrobe` (per-register templates + `fit` + `stance_affinity`), **`choices`** (fork-tier only — per-register `label`/`echo`, `writes.stance`/`writes.flags`, optional `rearm_after_turns`), `gloss`, **`remembers`** (slot → memory-thread kind — see "Memory threads"), `cooldown_turns`, `once`. Loader `telling/catalog.rs`, env override `BEAT_DEFINITIONS_PATH`. **Validated** — `BeatCatalog::validate()` runs inside `from_json_str` (every load path), and is refused at **error** level (`beat_catalog.invalid_rejected`) in favour of the builtin |
+| `src/data/beat_definitions.json` | **The Telling** beat catalog — the narrative *content* layer and the mod surface (see "The Telling"). One entry per beat: `id`, `tier` (`ambient`\|`beat`\|`fork`), `soul`, `when` (the predicate grammar), `nouns` (slot → resolver, with `fallback`), `wardrobe` (per-register templates + `fit` + `stance_affinity`), **`choices`** (fork-tier only — per-register `label`/`echo`, `writes.stance`/`writes.flags`, optional `rearm_after_turns`), `gloss`, **`remembers`** (slot → memory-thread kind — see "Memory threads"), `cooldown_turns`, `once`, `opening` (a game-opening beat a mid-game scenario retires). Loader `telling/catalog.rs`, env override `BEAT_DEFINITIONS_PATH`. **Validated** — `BeatCatalog::validate()` runs inside `from_json_str` (every load path), and is refused at **error** level (`beat_catalog.invalid_rejected`) in favour of the builtin |
 | `src/data/beat_config.json` | **The Telling** tunables: `budget` (`max_per_turn` / `global_cooldown_turns`, per tier), **`fork_expire_turns`** (30 — the safety valve, see "The fork tier")), `selection` (`novelty_window_turns`, `novelty_floor`, `fit_soft_tag_weight`, `stance_affinity_weight`, **`stance_affinity_floor`** (0.1 — the re-colouring term's positive floor), `min_selection_weight`), `trend` (`max_history_turns` **16** — must exceed every authored `trend` window, validated at catalog load, `min_delta`), `voice` (`default_register`, `registers`, **`mediums`** — the ordered oral→painted→written ladder, see "The maturing voice"), **`memory.max_threads_per_kind`** (8), `stance.axes` (id → backing signal + range; ids must be unique, and a backing signal may not itself be a `stance.*` signal). Loader `telling/config.rs`, env override `BEAT_CONFIG_PATH`. **Validated** inside `from_json_str`; refused at **error** level (`beat_config.invalid_rejected`) |
 ## The Telling — the narrative beat engine
 
@@ -490,3 +490,9 @@ Test suites: `core_sim/tests/telling.rs` (ambient/beat), `telling_fork.rs` (the 
 
 ---
 
+## Opening beats
+
+A beat marked `"opening": true` in `beat_definitions.json` tells the game's opening (`opening.cold_open`, the walk-out;
+`guidance.food_and_the_split`, which ends on "choose what we carry"). A scenario with `opening: false`
+retires them in `BeatLedger` as fired at the world-build tick before the build turn (`retire_opening_beats`),
+so their `once` guard holds and nothing re-tells them after a save. See `scenarios.md`.
