@@ -1,7 +1,7 @@
 {
   "name": "settlement_town_playtest",
   "opening": false,
-  "note": "A village tribe of three kin bands under chiefs (450 people, three tiles apart) a storage pit short of a town: Rushford (home) has released its food order and crews the pit at (13, 10) with its own hands, and every band works the food around its camp (the home band forages (12, 13) and hunts the boar; east hunts fowl and forages (18, 12); south hunts sheep and forages (14, 14)). The pit opens 25 work in, and the tribe becomes a Town about turn 5.",
+  "note": "A village tribe of three kin bands under chiefs (450 people, three tiles apart) a storage pit short of a town: Rushford (home) crews the pit at (13, 10) with its own hands and every band's elders keep its food (they pick the forage sites and herds around each camp; the herds section places a boar, fowl and sheep). The pit opens 25 work in, and the tribe becomes a Town about turn 5.",
   "world": {
     "preset": "earthlike",
     "width": 80,
@@ -209,90 +209,6 @@
             "target_x": 13,
             "target_y": 10,
             "species": "food_stores"
-          }
-        },
-        {
-          "band_order": {
-            "band": "home",
-            "kind": "food",
-            "action": "release"
-          }
-        },
-        {
-          "assign_labor": {
-            "band": "home",
-            "role": "forage",
-            "workers": 15,
-            "take_species": [],
-            "move_with_herd": false,
-            "target_x": 12,
-            "target_y": 13
-          }
-        },
-        {
-          "assign_labor": {
-            "band": "home",
-            "role": "hunt",
-            "workers": 5,
-            "take_species": [],
-            "move_with_herd": false,
-            "fauna_id": "boar_a"
-          }
-        },
-        {
-          "assign_labor": {
-            "band": "east",
-            "role": "forage",
-            "workers": 15,
-            "take_species": [],
-            "move_with_herd": false,
-            "target_x": 18,
-            "target_y": 12
-          }
-        },
-        {
-          "band_order": {
-            "band": "east",
-            "kind": "food",
-            "action": "release"
-          }
-        },
-        {
-          "assign_labor": {
-            "band": "east",
-            "role": "hunt",
-            "workers": 5,
-            "take_species": [],
-            "move_with_herd": false,
-            "fauna_id": "fowl_a"
-          }
-        },
-        {
-          "assign_labor": {
-            "band": "south",
-            "role": "forage",
-            "workers": 15,
-            "take_species": [],
-            "move_with_herd": false,
-            "target_x": 14,
-            "target_y": 14
-          }
-        },
-        {
-          "band_order": {
-            "band": "south",
-            "kind": "food",
-            "action": "release"
-          }
-        },
-        {
-          "assign_labor": {
-            "band": "south",
-            "role": "hunt",
-            "workers": 5,
-            "take_species": [],
-            "move_with_herd": false,
-            "fauna_id": "sheep_b"
           }
         }
       ],
