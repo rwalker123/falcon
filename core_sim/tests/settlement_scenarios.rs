@@ -7,11 +7,13 @@
 use bevy::prelude::*;
 use core_sim::scenario::{build_scenario_world, parse_scenario, ScenarioContext, ScenarioRefusal};
 use core_sim::{
-    build_test_app, run_turn, BandId, BranchId, CommandEventKind, CommandEventLog,
-    PopulationCohort, SettlementStageConfigHandle, SettlementStages, StartingLoadout,
-    TileImprovementRegistry, TribeRegistry,
+    build_test_app, run_turn, BandBench, BandEquipment, BandId, BranchId, CommandEventKind,
+    CommandEventLog, EquipmentConfigHandle, LaborAllocation, PopulationCohort,
+    SettlementStageConfigHandle, SettlementStages, StartingLoadout, TileImprovementRegistry,
+    TribeRegistry,
 };
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 const TOWN: &str = include_str!("../scenarios/settlement_town_playtest.json");
 const CITY: &str = include_str!("../scenarios/settlement_city_playtest.json");
@@ -337,4 +339,201 @@ fn a_file_that_opens_mid_game_and_states_an_outfit_is_refused_with_a_path() {
         refusals[0].reason.contains("opening: false"),
         "{refusals:?}"
     );
+}
+
+// ---- the settled stock each band opens with ----
+
+/// What a band holds after load: unit counts per equipment item, and whole material units.
+fn holdings(app: &mut App, band: u64) -> (BTreeMap<String, u32>, BTreeMap<String, u32>) {
+    let mut query = app
+        .world
+        .query::<(&BandId, &BandEquipment, &PopulationCohort)>();
+    let (_, equipment, cohort) = query
+        .iter(&app.world)
+        .find(|(id, _, _)| id.0 == band)
+        .expect("the band is in the world");
+    let items = equipment
+        .batches()
+        .map(|(item, batches)| (item.to_string(), batches.iter().map(|b| b.count).sum()))
+        .collect();
+    let materials = cohort
+        .stores
+        .materials()
+        .map(|(material, _)| {
+            (
+                material.to_string(),
+                cohort.stores.material_total(material).to_f32().round() as u32,
+            )
+        })
+        .collect();
+    (items, materials)
+}
+
+/// The items a kit on the roster is made of.
+fn kit_uses(app: &App, kit: &str) -> Vec<String> {
+    app.world
+        .resource::<EquipmentConfigHandle>()
+        .get()
+        .kit_definition(kit)
+        .expect("a kit on the roster")
+        .uses
+        .clone()
+}
+
+/// The stock the file states for `factions[0].bands[0]`: item -> units (kits expanded) and
+/// material -> units.
+fn stated_stock(app: &App, text: &str) -> (BTreeMap<String, u32>, BTreeMap<String, u32>) {
+    let file: Value = serde_json::from_str(text).unwrap();
+    let stock = &file["factions"][0]["bands"][0]["stock"];
+    let mut items: BTreeMap<String, u32> = BTreeMap::new();
+    for (kit, count) in stock["kits"].as_object().unwrap() {
+        for item in kit_uses(app, kit) {
+            *items.entry(item).or_default() += count.as_u64().unwrap() as u32;
+        }
+    }
+    for (item, count) in stock["items"].as_object().unwrap() {
+        *items.entry(item.clone()).or_default() += count.as_u64().unwrap() as u32;
+    }
+    let materials = stock["materials"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(m, n)| (m.clone(), n.as_u64().unwrap() as u32))
+        .collect();
+    (items, materials)
+}
+
+fn without_stock(text: &str) -> String {
+    let mut file: Value = serde_json::from_str(text).unwrap();
+    for band in file["factions"][0]["bands"].as_array_mut().unwrap() {
+        band.as_object_mut().unwrap().remove("stock");
+    }
+    file.to_string()
+}
+
+#[test]
+fn a_bands_stock_lands_on_top_of_what_it_would_hold_without_it() {
+    for text in [TOWN, CITY] {
+        let mut with = load(text);
+        let mut without = load(&without_stock(text));
+        let (stated_items, stated_materials) = stated_stock(&with, text);
+        let (items_with, materials_with) = holdings(&mut with, 1);
+        let (items_without, materials_without) = holdings(&mut without, 1);
+        for (item, units) in &stated_items {
+            assert_eq!(
+                items_with.get(item).copied().unwrap_or(0),
+                items_without.get(item).copied().unwrap_or(0) + units,
+                "{item}"
+            );
+        }
+        for (material, units) in &stated_materials {
+            assert_eq!(
+                materials_with.get(material).copied().unwrap_or(0),
+                materials_without.get(material).copied().unwrap_or(0) + units,
+                "{material}"
+            );
+        }
+        // Nothing the band would otherwise hold is lost to the stock.
+        for (item, units) in &items_without {
+            assert!(
+                items_with.get(item).copied().unwrap_or(0) >= *units,
+                "{item}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_band_opens_with_auto_craft_on_and_the_bench_tools_its_crafts_use() {
+    for text in [TOWN, CITY] {
+        let mut app = load(text);
+        let mut query = app.world.query::<(&BandId, &BandBench)>();
+        let bands: Vec<(u64, bool)> = query
+            .iter(&app.world)
+            .map(|(id, bench)| (id.0, bench.auto))
+            .collect();
+        assert!(!bands.is_empty());
+        for (band, auto) in bands {
+            assert!(auto, "band {band}: auto craft is on");
+            let (items, _) = holdings(&mut app, band);
+            for tool in ["loom", "tanning_frame", "bone_awl", "billet"] {
+                assert!(
+                    items.get(tool).copied().unwrap_or(0) >= 1,
+                    "band {band}: {tool}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn every_worker_on_a_kit_job_is_equipped_at_load() {
+    for text in [TOWN, CITY] {
+        let mut app = load(text);
+        let mut query = app.world.query::<(&BandId, &LaborAllocation)>();
+        let mut rows = 0;
+        for (id, labor) in query.iter(&app.world) {
+            for assignment in &labor.assignments {
+                rows += 1;
+                assert_eq!(
+                    assignment.staffing.bare, 0,
+                    "band {}: {:?} has bare-handed workers",
+                    id.0, assignment.target
+                );
+            }
+        }
+        assert!(rows > 0, "the bands work rows at load");
+    }
+}
+
+#[test]
+fn a_stock_is_valid_on_a_game_that_opens_like_a_new_one() {
+    let mut file: Value = serde_json::from_str(TOWN).unwrap();
+    file["opening"] = json!(true);
+    let text = file.to_string();
+    let mut app = load(&text);
+    let (_, stated_materials) = stated_stock(&app, &text);
+    let (_, materials) = holdings(&mut app, 1);
+    for (material, units) in stated_materials {
+        assert!(materials.get(&material).copied().unwrap_or(0) >= units);
+    }
+}
+
+fn town_with_stock(stock: Value) -> String {
+    let mut file: Value = serde_json::from_str(TOWN).unwrap();
+    file["factions"][0]["bands"][0]["stock"] = stock;
+    file.to_string()
+}
+
+#[test]
+fn a_stock_naming_nothing_real_is_refused_with_a_path() {
+    let paths = refusal_paths(&town_with_stock(json!({
+        "kits": { "no_such_kit": 1, "none": 1 },
+        "items": { "no_such_item": 1 },
+        "materials": { "no_such_material": 1 },
+    })));
+    for path in [
+        "factions[0].bands[0].stock.kits.no_such_kit",
+        "factions[0].bands[0].stock.kits.none",
+        "factions[0].bands[0].stock.items.no_such_item",
+        "factions[0].bands[0].stock.materials.no_such_material",
+    ] {
+        assert!(paths.contains(&path.to_string()), "{path}: {paths:?}");
+    }
+}
+
+#[test]
+fn a_negative_or_repeated_stock_count_is_refused() {
+    let Err(refusals) = try_load(&town_with_stock(json!({
+        "kits": {}, "items": { "loom": -1 }, "materials": {},
+    }))) else {
+        panic!("a negative count must be refused");
+    };
+    assert!(
+        refusals.iter().any(|r| r.reason.contains("line")),
+        "{refusals:?}"
+    );
+    let repeated = town_with_stock(json!({ "kits": {}, "items": {}, "materials": {} }))
+        .replace("\"items\":{}", "\"items\":{\"loom\":1,\"loom\":2}");
+    assert!(try_load(&repeated).is_err());
 }

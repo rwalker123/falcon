@@ -860,6 +860,9 @@ pub fn finish_scenario(
             }
         }
     }
+    // **Settled stock after every outfit window, before auto-craft**: written straight into the
+    // inventory, outside the carry cap, so it lands whether or not a window was ever open.
+    bands::apply_stock(world, &setup);
     // **Auto-craft after the outfit, before labor**: the bench fills from the gear the outfit left.
     if !refusals.is_empty() {
         return Err(refusals);

@@ -27,13 +27,17 @@ use crate::intensification::{knows, LadderConfigHandle};
 use crate::leader_names::LeaderNameCatalogHandle;
 use crate::leadership::{emergence_entry, BandLeadership};
 use crate::leadership_config::LeadershipConfigHandle;
+use crate::materials_config::MaterialsConfigHandle;
 use crate::orders::{FactionId, FactionRegistry};
+use crate::recipes_config::RecipesConfigHandle;
 use crate::resources::{
     CommandEventLog, DiscoveryProgressLedger, SimulationConfig, SimulationTick,
 };
+use crate::scalar::scalar_from_f32;
 use crate::start_profile::{ActiveStartProfile, StartProfileKnowledgeTagsHandle};
 use crate::starting_loadout::{
-    allocation_load, faction_carry, party_held_items, window_people, LoadoutSupply, LoadoutWindow,
+    allocation_load, expand_kits, faction_carry, party_held_items, window_people, KitAllocation,
+    LoadoutSupply, LoadoutWindow, OPENING_MATERIAL_READING,
 };
 use crate::treaties::Treaties;
 use crate::TileImprovementRegistry;
@@ -95,6 +99,12 @@ pub struct BandEntry {
     /// on after the outfit, as the server's `set_auto_craft` does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_craft: Option<bool>,
+    /// A settled stock the band holds at load, on top of its outfit: kits, loose equipment items
+    /// (the bench tools no kit names) and materials, written straight into the band's inventory,
+    /// outside the carry cap. Applied after the outfitting windows close, so it is valid whether
+    /// `opening` is true or false. Absent adds nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stock: Option<Stock>,
 }
 
 /// The shares of a band in each age bracket.
@@ -130,6 +140,24 @@ pub struct Outfit {
     #[serde(deserialize_with = "unique_keys")]
     #[schemars(with = "BTreeMap<String, u32>")]
     pub kits: BTreeMap<String, u32>,
+    #[serde(deserialize_with = "unique_keys")]
+    #[schemars(with = "BTreeMap<String, u32>")]
+    pub materials: BTreeMap<String, u32>,
+}
+
+/// A band's settled stock. Every key is required (`{}` for none); counts are whole and never negative.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Stock {
+    /// Whole kits: each expands to the items it is made of, as an outfit's does.
+    #[serde(deserialize_with = "unique_keys")]
+    #[schemars(with = "BTreeMap<String, u32>")]
+    pub kits: BTreeMap<String, u32>,
+    /// Loose equipment items by id (`loom`, `tanning_frame`, `bone_awl`, ...): the gear no kit names.
+    #[serde(deserialize_with = "unique_keys")]
+    #[schemars(with = "BTreeMap<String, u32>")]
+    pub items: BTreeMap<String, u32>,
+    /// Material units by id, any material the roster names.
     #[serde(deserialize_with = "unique_keys")]
     #[schemars(with = "BTreeMap<String, u32>")]
     pub materials: BTreeMap<String, u32>,
@@ -282,6 +310,9 @@ fn check_band(
             ));
         }
     }
+    if let Some(stock) = &band.stock {
+        check_stock(stock, &format!("{at}.stock"), ctx, refusals);
+    }
     let Some(outfit) = &band.outfit else {
         return;
     };
@@ -307,6 +338,125 @@ fn check_band(
             ));
         }
     }
+}
+
+/// Pass 1 for a band's `stock`: every kit, item and material named must exist on its roster.
+fn check_stock(
+    stock: &Stock,
+    at: &str,
+    ctx: &ScenarioContext,
+    refusals: &mut Vec<ScenarioRefusal>,
+) {
+    for kit in stock.kits.keys() {
+        match ctx.equipment.kit_definition(kit) {
+            None => refusals.push(ScenarioRefusal::new(
+                format!("{at}.kits.{kit}"),
+                format!("'{kit}' is not a kit on the equipment roster"),
+            )),
+            Some(definition) if definition.uses.is_empty() => refusals.push(ScenarioRefusal::new(
+                format!("{at}.kits.{kit}"),
+                format!("'{kit}' carries no items, so stocking it would add nothing"),
+            )),
+            Some(_) => {}
+        }
+    }
+    for item in stock.items.keys() {
+        if ctx.equipment.item(item).is_none() {
+            refusals.push(ScenarioRefusal::new(
+                format!("{at}.items.{item}"),
+                format!("'{item}' is not an item on the equipment roster"),
+            ));
+        }
+    }
+    for material in stock.materials.keys() {
+        if ctx.materials.material(material).is_none() {
+            refusals.push(ScenarioRefusal::new(
+                format!("{at}.materials.{material}"),
+                format!("'{material}' is not a material"),
+            ));
+        }
+    }
+}
+
+/// **Write every band's `stock` into its inventory**, after the outfitting windows. Kits expand to
+/// their items; each item is stocked as its own fresh batch at its default tier with the grade a
+/// bare-handed craft comes out at, and each material is deposited at the opening reading. Nothing
+/// here is checked against the carry cap: it is a settled stock, not a loadout.
+pub(super) fn apply_stock(world: &mut World, setup: &ScenarioSetup) {
+    let equipment = world.resource::<EquipmentConfigHandle>().get();
+    let recipes = world.resource::<RecipesConfigHandle>().get();
+    let materials_table = world.resource::<MaterialsConfigHandle>().get();
+    for faction_setup in &setup.factions {
+        for entry in &faction_setup.bands {
+            let Some(stock) = &entry.stock else {
+                continue;
+            };
+            let Some(band) = setup.spawned.get(&entry.id).copied() else {
+                continue;
+            };
+            let Some(entity) = band_entity_of(world, band) else {
+                continue;
+            };
+            let kits: Vec<KitAllocation> = stock
+                .kits
+                .iter()
+                .map(|(kit_id, count)| KitAllocation {
+                    kit_id: kit_id.clone(),
+                    count: *count,
+                })
+                .collect();
+            let mut items = expand_kits(&equipment, &kits);
+            for (item, count) in &stock.items {
+                *items.entry(item.clone()).or_default() += count;
+            }
+            let mut ledger = world
+                .get::<BandEquipment>(entity)
+                .cloned()
+                .unwrap_or_default();
+            for (item_id, count) in items {
+                let Some(item) = equipment.item(&item_id) else {
+                    continue;
+                };
+                ledger.stock(
+                    &item_id,
+                    count,
+                    &item.default_tier().id,
+                    BandEquipment::anchor_grade(&recipes, &materials_table, &item_id),
+                );
+            }
+            world.entity_mut(entity).insert(ledger);
+            let Some(mut cohort) = world.get_mut::<PopulationCohort>(entity) else {
+                continue;
+            };
+            for (material_id, units) in &stock.materials {
+                let Some(def) = materials_table.material(material_id) else {
+                    continue;
+                };
+                let readings: BTreeMap<String, f32> = def
+                    .characteristics
+                    .iter()
+                    .map(|axis| (axis.clone(), OPENING_MATERIAL_READING))
+                    .collect();
+                let Some(key) = materials_table.band_key(material_id, &readings) else {
+                    continue;
+                };
+                cohort.stores.deposit_material(
+                    material_id,
+                    key,
+                    scalar_from_f32(*units as f32),
+                    &readings,
+                );
+            }
+        }
+    }
+}
+
+fn band_entity_of(world: &mut World, band: BandId) -> Option<Entity> {
+    let mut query = world.query::<(Entity, &BandId)>();
+    query
+        .iter(world)
+        .find(|(_, id)| **id == band)
+        .map(|(entity, _)| entity)
 }
 
 /// **What worldgen reads, while it spawns, to put a scenario's bands in place of a profile's.**
@@ -714,50 +864,32 @@ fn export_band(
             band.scenario_id
         ));
     }
-    let outfit = {
-        if !uncovered.is_empty() {
-            let listed: Vec<String> = uncovered
-                .iter()
-                .map(|(item, units)| format!("{units} {item}"))
-                .collect();
-            notes.push(format!(
-                "{}: holds gear no kit is made of ({}), which an outfit cannot say",
-                band.scenario_id,
-                listed.join(", ")
-            ));
-        }
-        // The grant takes only the materials the human archetype's pick list names (the loader's own
-        // rule), so a crafted or gathered material the band holds has no key to go in.
-        let pickable: Vec<String> = world
-            .resource::<ActiveStartProfile>()
-            .profile()
-            .overrides()
-            .human_archetype()
-            .map(|archetype| archetype.opening_loadout.pickable_materials.clone())
-            .unwrap_or_default();
-        let (materials, unpickable): (BTreeMap<String, u32>, BTreeMap<String, u32>) = materials
-            .into_iter()
-            .partition(|(material, _)| pickable.contains(material));
-        if !unpickable.is_empty() {
-            let listed: Vec<String> = unpickable
-                .iter()
-                .map(|(material, units)| format!("{units} {material}"))
-                .collect();
-            notes.push(format!(
-                "{}: holds material an outfit cannot give ({}): not a pickable material",
-                band.scenario_id,
-                listed.join(", ")
-            ));
-        }
-        if over_carry(world, faction, band.entity, &kits, &materials) {
-            notes.push(format!(
-                "{}: its larder and outfit exceed what its carry allows, so it will be refused \
-                 OverCarry on load; trim by hand",
-                band.scenario_id
-            ));
-        }
-        Some(Outfit { kits, materials })
-    };
+    // The grant takes only the materials the human archetype's pick list names (the loader's own
+    // rule), so what no outfit can say (gear no kit is made of, a crafted or gathered material)
+    // is written as the band's `stock`, which can.
+    let pickable: Vec<String> = world
+        .resource::<ActiveStartProfile>()
+        .profile()
+        .overrides()
+        .human_archetype()
+        .map(|archetype| archetype.opening_loadout.pickable_materials.clone())
+        .unwrap_or_default();
+    let (materials, unpickable): (BTreeMap<String, u32>, BTreeMap<String, u32>) = materials
+        .into_iter()
+        .partition(|(material, _)| pickable.contains(material));
+    let stock = (!uncovered.is_empty() || !unpickable.is_empty()).then(|| Stock {
+        kits: BTreeMap::new(),
+        items: uncovered.clone(),
+        materials: unpickable,
+    });
+    if over_carry(world, faction, band.entity, &kits, &materials) {
+        notes.push(format!(
+            "{}: its larder and outfit exceed what its carry allows, so it will be refused \
+             OverCarry on load; trim by hand",
+            band.scenario_id
+        ));
+    }
+    let outfit = Some(Outfit { kits, materials });
     let auto_craft = world
         .get::<BandBench>(band.entity)
         .is_some_and(|bench| bench.auto)
@@ -796,6 +928,7 @@ fn export_band(
         outfit,
         auto_craft,
         leader,
+        stock,
     })
 }
 

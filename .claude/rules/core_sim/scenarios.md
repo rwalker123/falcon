@@ -36,7 +36,7 @@ section's is in `routes.md`, the bench section's is in `crafting.md`.
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | The editor verbs | `handle_list_scenarios` / `handle_read_scenario` / `handle_write_scenario` in `bin/server.rs`; `ListScenariosCommand` = CommandEnvelope **103**, `ReadScenarioCommand` = **104**, `WriteScenarioCommand` = **105**, all answered on `ScenarioOpReply` (`files` = 5, `text` = 6, `schema` = 7, appended after export's `notes` = 4; empty when not that verb's answer). Rust: `CommandPayload::{ListScenarios, ReadScenario, WriteScenario}`; text forms `list_scenarios` and `read_scenario <path>` (`write_scenario` carries a whole file and has none) |
 | The editor's path policy, the file list, the schema | `resolve_scenario_path`, `list_scenario_files`, `scenario_schema`, `SCENARIO_DIR` in `core_sim/src/scenario/mod.rs` |
-| Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched): `breeding_ceiling_150.json`, `kept_roads.json` and the `*_playtest.json` files, among them `settlement_town_playtest.json` and `settlement_city_playtest.json` (a village a pit short of a town, a town a granary short of a city; `tests/settlement_scenarios.rs` pins each crossing). Both hold only chief bands (3 and 10, 150 people each, `leader: true`, three tiles apart) and a full early-game knowledge list; the home band releases its whole food order (`band_order release`, issued after its first command so the order exists) and crews the build itself, while every band works nearby forage sites and herds from `herds` entries. The build's `progress` (town pit 25 of 40, city granary 105 of 120) sets the crossing at about turn 5 and turn 4: a tile build takes at most its rung's `max_builders` heads, so the pace is set by `progress`, not by the head count |
+| Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched): `breeding_ceiling_150.json`, `kept_roads.json` and the `*_playtest.json` files, among them `settlement_town_playtest.json` and `settlement_city_playtest.json` (a village a pit short of a town, a town a granary short of a city; `tests/settlement_scenarios.rs` pins each crossing). Both hold only chief bands (3 and 10, 150 people each, `leader: true`, `auto_craft: true`, three tiles apart) and a knowledge list of every early-game and food tag (the city adds `selective_breeding`); every band opens with a `stock` (kits sized to the work its band does at load so none works bare-handed, one each of `loom`, `tanning_frame`, `bone_awl`, `billet`, a few `axe`/`wedges`, and a bone/fibre/hide/wood/stone reserve for auto craft); the home band releases its whole food order (`band_order release`, issued after its first command so the order exists) and crews the build itself, while every band works nearby forage sites and herds from `herds` entries. The build's `progress` (town pit 25 of 40, city granary 105 of 120) sets the crossing at about turn 5 and turn 4: a tile build takes at most its rung's `max_builders` heads, so the pace is set by `progress`, not by the head count |
 | Sending one | `cargo xtask command load_scenario <path>` · `scripts/run_stack.sh --scenario <path>` |
 | Exporting one | `scenario::export_scenario` (each section module's `export`); `handle_export_scenario` in `bin/server.rs`; `ExportScenarioCommand` = CommandEnvelope **102**, answered on `ScenarioOpReply` (**14**); `cargo xtask command export_scenario <path>` |
 
@@ -44,7 +44,7 @@ section's is in `routes.md`, the bench section's is in `crafting.md`.
 
 1. **Parse and resolve names** (`parse_scenario`), with no world built. Every struct is
    `deny_unknown_fields`, there are no serde defaults, and a key is optional only where the
-   command it replays has an `Option` (a band's `outfit`, `leader` and `auto_craft`; a labor entry's target,
+   command it replays has an `Option` (a band's `outfit`, `leader`, `auto_craft` and `stock`; a labor entry's target,
    kit, species, floor; a tile's `terrain`, `flora` and `belief`, of which one is required; a road's
    `keeper`, which a trail has none of). Every other section key is required (`[]` for none). Names are
    checked against the live
@@ -145,6 +145,8 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   refused at that band's `factions[i].bands[j].outfit`, since the outfit is stated in the window it
   has none of. The export omits the key when `true`. Both settlement playtest scenarios set it
   `false`.
+- `finish_scenario` then writes each band's `stock` (`bands::apply_stock`) straight into its
+  inventory after the outfit replay, so it lands with `opening` true or false, outside the carry cap, on top of whatever the band holds.
 - `finish_scenario` then replays each band's `auto_craft: true` through
   `command_seam::apply_set_auto_craft` (after the outfit, before labor). A refusal stops the load at
   `factions[i].bands[j].auto_craft`.
@@ -328,5 +330,5 @@ the herd fit matches the spawn tile first, else the tile the herd stands on afte
 `game_` immigrant past the build turn is written as `placed`. A placed herd whose current tile fails
 the placement predicate is written at the nearest tile that passes (hex distance, then `(y, x)`) with a
 note. An outfit lists only the materials the human archetype's pick list names; any other material a
-band holds is noted. Every band's gear is written as its own `outfit`. A held rung is replayed through the build gate, so a faction must know the
+band holds, and any gear no kit is made of, is written as the band's `stock`. Every band's kits are written as its own `outfit`. A held rung is replayed through the build gate, so a faction must know the
 lesson it needs, which only `knowledge` tags the start profile names can say.

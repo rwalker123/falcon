@@ -28,7 +28,10 @@
         "herd_lore",
         "travois",
         "cultivation",
-        "herding"
+        "herding",
+        "seed_selection",
+        "worked_land",
+        "penning"
       ],
       "rungs": [
         {
@@ -53,9 +56,9 @@
           ],
           "size": 150,
           "ages": {
-            "children": 0.20,
-            "working": 0.70,
-            "elders": 0.10
+            "children": 0.2,
+            "working": 0.7,
+            "elders": 0.1
           },
           "founding_lines": 8,
           "larder": [
@@ -64,7 +67,32 @@
               "amount": 700.0
             }
           ],
-          "leader": true
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 110,
+              "big_game": 12,
+              "sledding": 20,
+              "tillage": 12,
+              "hurdling": 12
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
         },
         {
           "id": "east",
@@ -74,9 +102,9 @@
           ],
           "size": 150,
           "ages": {
-            "children": 0.20,
-            "working": 0.70,
-            "elders": 0.10
+            "children": 0.2,
+            "working": 0.7,
+            "elders": 0.1
           },
           "founding_lines": 8,
           "larder": [
@@ -85,7 +113,33 @@
               "amount": 700.0
             }
           ],
-          "leader": true
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
         },
         {
           "id": "south",
@@ -95,9 +149,9 @@
           ],
           "size": 150,
           "ages": {
-            "children": 0.20,
-            "working": 0.70,
-            "elders": 0.10
+            "children": 0.2,
+            "working": 0.7,
+            "elders": 0.1
           },
           "founding_lines": 8,
           "larder": [
@@ -106,7 +160,33 @@
               "amount": 700.0
             }
           ],
-          "leader": true
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
         }
       ],
       "tribes": [
