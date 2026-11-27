@@ -23,6 +23,7 @@ pub mod pens;
 pub mod roads;
 pub mod rungs;
 pub mod tiles;
+pub mod tribes;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -424,6 +425,7 @@ pub fn parse_scenario(
     }
     bands::check(&file.factions, ctx, &mut refusals);
     bench::check(&file.factions, ctx, &mut refusals);
+    tribes::check(&file.factions, &mut refusals);
     rungs::check(&file.factions, &file.herds, ctx, &mut refusals);
     labor::check(&file.factions, &file.herds, &file.world, ctx, &mut refusals);
     pens::check(&file.factions, &file.herds, &mut refusals);
@@ -573,6 +575,9 @@ pub(crate) fn herd_scenario_id(index: usize) -> String {
 
 /// The one line the `tiles` section's export says: the live world does not remember its overrides.
 const TILES_NOT_EXPORTED_NOTE: &str = "tile overrides are not exported";
+/// The line a world holding a tribe writes: the file founds one only from its `tribes` section.
+const TRIBES_NOT_EXPORTED_NOTE: &str =
+    "tribes are not exported: a reload earns them again, or name them in a `tribes` section";
 
 /// **The `world` section of the live game**: the arguments it was built from, read off the config the
 /// build wrote them into.
@@ -639,6 +644,9 @@ pub fn export_scenario(world: &mut World, name: &str) -> ScenarioExport {
     let deposits = deposits::export(world);
     bands::export_unexpressed(world, &mut notes);
     notes.push(TILES_NOT_EXPORTED_NOTE.to_string());
+    if !world.resource::<crate::TribeRegistry>().is_empty() {
+        notes.push(TRIBES_NOT_EXPORTED_NOTE.to_string());
+    }
     let file = ScenarioFile {
         name: name.to_string(),
         note: notes.join("\n"),
@@ -674,6 +682,16 @@ pub fn finish_scenario(
     };
     let herd_setup = world.remove_resource::<ScenarioHerdSetup>();
     let mut refusals = setup.take_refusals();
+    // **Belief a tile stands with** (the `tiles` section's `belief`): added through the registry's
+    // one seam, before any band's anchor is read.
+    {
+        let mut registry = world.resource_mut::<crate::BeliefRegistry>();
+        for entry in &setup.tiles {
+            if let Some(amount) = entry.belief {
+                registry.add(bevy::math::UVec2::new(entry.at[0], entry.at[1]), amount);
+            }
+        }
+    }
     // **A band opens at exactly what the file says.** The build turn fed, aged and buried the bands
     // the Startup seeding made, so each one's head-count, age shape and larder are stamped again from
     // the file, through the seeding's own body, before anything reads them (the outfit's carry counts
@@ -832,6 +850,9 @@ pub fn finish_scenario(
     // band's own row holds. The reservation is removed whichever way the replay ends.
     world.insert_resource(labor::reservations(&setup, &herds));
     bands::apply_leaders(world, &setup, &mut refusals);
+    if refusals.is_empty() {
+        tribes::apply(world, &setup, &mut refusals);
+    }
     let labor_replay: Result<(), ()> = 'labor: {
         // **Labor after every faction's outfit** (plan section 2.8 step 6): the outfit is an ordinary
         // revision of the opening window, and a work row's gear is read against the outfit it ends up with.

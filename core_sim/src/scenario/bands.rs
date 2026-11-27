@@ -63,6 +63,9 @@ pub struct FactionSection {
     pub pens: Vec<super::pens::PenEntry>,
     /// The road rungs the faction holds at the start (`roads.rs`). A required key: `[]` for none.
     pub roads: Vec<super::roads::RoadEntry>,
+    /// Tribes founded at load (`tribes.rs`). Optional: absent founds none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tribes: Option<Vec<super::tribes::TribeEntry>>,
 }
 
 /// One band.
@@ -339,6 +342,7 @@ pub struct FactionSetup {
     /// The faction's pen verbs, replayed after the builds. A required key: `[]` for none.
     pub pens: Vec<super::pens::PenEntry>,
     pub roads: Vec<super::roads::RoadEntry>,
+    pub tribes: Option<Vec<super::tribes::TribeEntry>>,
 }
 
 impl ScenarioSetup {
@@ -358,6 +362,7 @@ impl ScenarioSetup {
                     labor: section.labor.clone(),
                     pens: section.pens.clone(),
                     roads: section.roads.clone(),
+                    tribes: section.tribes.clone(),
                 })
                 .collect(),
             ..Self::default()
@@ -841,6 +846,7 @@ pub(super) fn export(
             labor: Vec::new(),
             pens: Vec::new(),
             roads: Vec::new(),
+            tribes: None,
         })
         .collect()
 }

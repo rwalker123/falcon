@@ -450,3 +450,23 @@ by the time `finish_scenario` runs, so no test reaches that refusal.
 Export writes `leader: true` on a band that holds one and notes that its name and kind are derived again
 on load (the name from the band id, the kind from the culture axis then). A leaderless band with banked
 practice above zero is noted ("its leadership practice X of Y is not exported").
+
+### The `tribes` section
+
+`factions[].tribes` (`core_sim/src/scenario/tribes.rs`) is optional: `[{ "bands": ["home", "east", "south"] }]` founds each
+entry as one tribe at load, so a settlement scenario opens with its tribe instead of earning it over about
+eighteen turns. Each entry is founded in `finish_scenario` **after `apply_leaders` and before labor** through
+`tribe::found_scenario_tribe`, which runs `found_tribe`, the body `advance_tribes` forms a group with (id, name,
+the largest chiefed member's leader promoted, opening scouting range, `formed` count, the `TribeFormed` line).
+The load then **establishes** what the game would have to earn, so the next turn keeps the tribe (it does not
+refuse a file that lacks them): every member is set to one belief anchor (the strongest place of belief on the
+map, a `tiles[].belief` or the dead the build turn buried), every pair with a missing direction gets a full tie
+both ways, and every pair's points bank is set to `tribe_score_threshold`. The settlement stage is then
+resolved once (`advance_settlements`), so the world opens at its stage.
+
+| key | meaning | refused when |
+|---|---|---|
+| `tribes[].bands` | the member bands' scenario ids, all of this faction (a tribe is one people, so another people's band is "not a band of this faction") | fewer than `MIN_TRIBE_BANDS` (2) bands at `tribes[k].bands`; an id the faction does not declare; an id listed twice in one tribe or in two tribes; at apply time, no member with a leader (`leader: true`, or one the build turn emerged) at `tribes[k]`; no place of belief on the map |
+
+Export writes no tribes and notes "tribes are not exported".
+

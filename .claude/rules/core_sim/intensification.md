@@ -2742,7 +2742,7 @@ its crew like any other: with no labor row on it, it rots after its grace.
 
 | key | meaning | refused when |
 |---|---|---|
-| `held.rung` | The rung id, `branch:rung` (`plant:farm`) | not on the ladder; a branch root; a road, tile or band branch |
+| `held.rung` | The rung id, `branch:rung` (`plant:farm`) | not on the ladder; a branch root; a road or band branch. A **tile** branch (`food_stores`) is held at `at`: the store is placed owned by the faction's band nearest the tile and seated at the rung's top (a pit or granary, so `settlement_stage_config.json`'s store criterion reads it; it needs a crew row to be kept) |
 | `held.at` | `[x, y]` of the patch, or of the working | absent for a patch or working; given for a herd; no patch or working there |
 | `held.herd` | The herd's scenario id (the `herds` section's `id`) | absent for a herd; given for a patch or working; an id the file's `herds` section does not declare |
 | `held.material` | The deposit material of a working | absent for a working; given for anything else; not a deposit on this rung's branch |

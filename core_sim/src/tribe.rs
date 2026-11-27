@@ -24,7 +24,7 @@ use crate::{
     belief_config::{BeliefConfig, BeliefConfigHandle},
     components::{BandId, BandName, PopulationCohort, ResidentBand},
     components::{LaborAllocation, SourcePriority},
-    connections::ConnectionLedger,
+    connections::{ConnectionKey, ConnectionLedger, Sighting},
     culture::{max_axis_gap, CultureLayer, CultureManager, CultureOwner, CULTURE_TRAIT_SPAN},
     ladder_ids::{BranchId, RungId},
     leadership::{BandLeader, BandLeadership, LeaderKind},
@@ -963,48 +963,169 @@ pub fn advance_tribes(
         if claimed.contains(&index) {
             continue;
         }
-        let Some(largest) = largest_band(group.members.iter(), &facts) else {
-            continue;
-        };
-        let Some((leader_band, leader)) = largest_chiefed(group.members.iter(), &facts) else {
-            continue;
-        };
-        let id = registry.allocate();
-        let tribe = Tribe {
-            id,
-            faction: group.faction,
-            name: format!("{} tribe", facts[&largest].name),
-            members: group.members.clone(),
-            leader: TribeLeader::promote(leader_band, leader, turn),
-            since_turn: turn,
-            works: Vec::new(),
-            levy: LevyCeiling::default(),
-            // The tribe opens at the largest range any member already scouts.
-            scouting_range: group
-                .members
-                .iter()
-                .filter_map(|member| facts.get(member))
-                .map(|f| f.scouting_range)
-                .max()
-                .unwrap_or(0),
-            carriers: Vec::new(),
-        };
-        *registry.formed.entry(group.faction).or_insert(0) += 1;
-        event_log.push(tribe_entry(
+        found_tribe(
+            &mut registry,
+            &mut event_log,
             turn,
-            CommandEventKind::TribeFormed,
-            &tribe,
-            largest,
-            tribe_formed_label(&tribe),
-            format!(
-                "tribe={} kind={} leader={}",
-                tribe.id.0,
-                tribe.leader.kind.as_str(),
-                tribe.leader.name
-            ),
-        ));
-        registry.tribes.insert(id, tribe);
+            group.faction,
+            &group.members,
+            &facts,
+        );
     }
+}
+
+/// **Found one tribe of `members`**, the one body both a group's formation in [`advance_tribes`]
+/// and a scenario's `tribes` entry run: the id, the name (the largest member's, then "tribe"), the
+/// leader (the largest chiefed member's, promoted), the opening scouting range, the `formed` count
+/// and the `TribeFormed` feed line. `None` when no member is resident or none is chiefed.
+fn found_tribe(
+    registry: &mut TribeRegistry,
+    event_log: &mut CommandEventLog,
+    turn: u64,
+    faction: FactionId,
+    members: &BTreeSet<BandId>,
+    facts: &BTreeMap<BandId, BandFacts>,
+) -> Option<TribeId> {
+    let largest = largest_band(members.iter(), facts)?;
+    let (leader_band, leader) = largest_chiefed(members.iter(), facts)?;
+    let id = registry.allocate();
+    let tribe = Tribe {
+        id,
+        faction,
+        name: format!("{} tribe", facts[&largest].name),
+        members: members.clone(),
+        leader: TribeLeader::promote(leader_band, leader, turn),
+        since_turn: turn,
+        works: Vec::new(),
+        levy: LevyCeiling::default(),
+        // The tribe opens at the largest range any member already scouts.
+        scouting_range: members
+            .iter()
+            .filter_map(|member| facts.get(member))
+            .map(|f| f.scouting_range)
+            .max()
+            .unwrap_or(0),
+        carriers: Vec::new(),
+    };
+    *registry.formed.entry(faction).or_insert(0) += 1;
+    event_log.push(tribe_entry(
+        turn,
+        CommandEventKind::TribeFormed,
+        &tribe,
+        largest,
+        tribe_formed_label(&tribe),
+        format!(
+            "tribe={} kind={} leader={}",
+            tribe.id.0,
+            tribe.leader.kind.as_str(),
+            tribe.leader.name
+        ),
+    ));
+    registry.tribes.insert(id, tribe);
+    Some(id)
+}
+
+/// **A scenario's tribe**: found one tribe of `members` (resident bands of `faction`, at least one
+/// with a leader of its own) through [`found_tribe`], and make true what the game would have to
+/// earn first, so the next [`advance_tribes`] keeps it rather than dissolving it:
+///
+/// - every member holds the one belief anchor `anchor` (the locality check buckets by anchor);
+/// - every pair holds a live tie both ways (a missing direction is inserted at the full tie, as a
+///   long acquaintance would leave it);
+/// - every pair's points bank is full, so the pair is close and the tribe is one component.
+///
+/// `Err` is the refusal's text.
+pub fn found_scenario_tribe(
+    world: &mut World,
+    faction: FactionId,
+    members: &BTreeSet<BandId>,
+    anchor: UVec2,
+) -> Result<TribeId, String> {
+    let turn = world.resource::<SimulationTick>().0;
+    let threshold = world
+        .resource::<LeadershipConfigHandle>()
+        .get()
+        .tribe_score_threshold;
+    let mut facts: BTreeMap<BandId, BandFacts> = BTreeMap::new();
+    let mut entities: Vec<Entity> = Vec::new();
+    let mut query = world.query_filtered::<TribeBandParts, With<ResidentBand>>();
+    for (entity, band, cohort, name, leadership, allocation) in query.iter(world) {
+        if !members.contains(band) {
+            continue;
+        }
+        if cohort.faction != faction {
+            return Err(format!("band {} is not of this people", band.0));
+        }
+        entities.push(entity);
+        facts.insert(
+            *band,
+            BandFacts {
+                size: cohort.size,
+                name: name
+                    .map(|n| n.0.clone())
+                    .unwrap_or_else(|| band_label(*band)),
+                anchor: Some(anchor),
+                origins: BTreeSet::new(),
+                leader: leadership.and_then(|l| l.leader.clone()),
+                levy_heads: 0,
+                scout_heads: 0,
+                pool: 0,
+                scouting_range: allocation.map_or(0, |a| a.scouting_range_tiles()),
+            },
+        );
+    }
+    if facts.len() != members.len() {
+        return Err("a member is not a resident band".to_string());
+    }
+    if largest_chiefed(members.iter(), &facts).is_none() {
+        return Err(
+            "no member has a leader, and a tribe needs a chief (give a band `leader: true`)"
+                .to_string(),
+        );
+    }
+    for entity in entities {
+        if let Some(mut cohort) = world.get_mut::<PopulationCohort>(entity) {
+            cohort.belief_anchor = Some(anchor);
+        }
+    }
+    let ids: Vec<BandId> = members.iter().copied().collect();
+    {
+        let mut ledger = world.resource_mut::<ConnectionLedger>();
+        for (i, a) in ids.iter().enumerate() {
+            for b in &ids[i + 1..] {
+                if ledger.tied_both_ways(*a, *b) {
+                    continue;
+                }
+                for (observer, subject) in [(*a, *b), (*b, *a)] {
+                    let sighting =
+                        Sighting::new(UVec2::ZERO, turn, facts[&subject].name.clone(), faction);
+                    ledger.insert_full_tie(ConnectionKey::new(observer, subject), &sighting, turn);
+                }
+            }
+        }
+    }
+    let mut event_log = world
+        .remove_resource::<CommandEventLog>()
+        .expect("the command event log");
+    let mut registry = world
+        .remove_resource::<TribeRegistry>()
+        .expect("the tribe registry");
+    let found = found_tribe(
+        &mut registry,
+        &mut event_log,
+        turn,
+        faction,
+        members,
+        &facts,
+    );
+    for (i, a) in ids.iter().enumerate() {
+        for b in &ids[i + 1..] {
+            registry.points.insert(band_pair(*a, *b), threshold);
+        }
+    }
+    world.insert_resource(registry);
+    world.insert_resource(event_log);
+    found.ok_or_else(|| "the tribe could not be founded".to_string())
 }
 
 #[cfg(test)]

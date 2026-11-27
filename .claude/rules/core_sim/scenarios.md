@@ -36,7 +36,7 @@ section's is in `routes.md`, the bench section's is in `crafting.md`.
 | The verb and its reply | `handle_load_scenario` in `bin/server.rs`; `LoadScenarioCommand` = CommandEnvelope **101**, `ScenarioOpReply` = QueryReplyEnvelope **14** |
 | The editor verbs | `handle_list_scenarios` / `handle_read_scenario` / `handle_write_scenario` in `bin/server.rs`; `ListScenariosCommand` = CommandEnvelope **103**, `ReadScenarioCommand` = **104**, `WriteScenarioCommand` = **105**, all answered on `ScenarioOpReply` (`files` = 5, `text` = 6, `schema` = 7, appended after export's `notes` = 4; empty when not that verb's answer). Rust: `CommandPayload::{ListScenarios, ReadScenario, WriteScenario}`; text forms `list_scenarios` and `read_scenario <path>` (`write_scenario` carries a whole file and has none) |
 | The editor's path policy, the file list, the schema | `resolve_scenario_path`, `list_scenario_files`, `scenario_schema`, `SCENARIO_DIR` in `core_sim/src/scenario/mod.rs` |
-| Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched): `breeding_ceiling_150.json`, `kept_roads.json` and the `*_playtest.json` files |
+| Checked-in scenarios | `core_sim/scenarios/<name>.json` (reviewed fixtures, not watched): `breeding_ceiling_150.json`, `kept_roads.json` and the `*_playtest.json` files, among them `settlement_town_playtest.json` and `settlement_city_playtest.json` (a village a pit short of a town, a town a granary short of a city; `tests/settlement_scenarios.rs` pins each crossing) |
 | Sending one | `cargo xtask command load_scenario <path>` · `scripts/run_stack.sh --scenario <path>` |
 | Exporting one | `scenario::export_scenario` (each section module's `export`); `handle_export_scenario` in `bin/server.rs`; `ExportScenarioCommand` = CommandEnvelope **102**, answered on `ScenarioOpReply` (**14**); `cargo xtask command export_scenario <path>` |
 
@@ -45,7 +45,7 @@ section's is in `routes.md`, the bench section's is in `crafting.md`.
 1. **Parse and resolve names** (`parse_scenario`), with no world built. Every struct is
    `deny_unknown_fields`, there are no serde defaults, and a key is optional only where the
    command it replays has an `Option` (a band's `outfit`, `leader` and `auto_craft`; a labor entry's target,
-   kit, species, floor; a tile's `terrain` and `flora`, of which one is required; a road's
+   kit, species, floor; a tile's `terrain`, `flora` and `belief`, of which one is required; a road's
    `keeper`, which a trail has none of). Every other section key is required (`[]` for none). Names are
    checked against the live
    app's config handles (presets, profiles, archetypes, knowledge tags, keeping classes, kits,
@@ -116,6 +116,8 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   `BandLeadership::appoint` body emergence runs; `leadership.md` → "Scenario section") **after the outfit and
   auto-craft replays and immediately before labor**: each of those restaffs its band, and a led band's
   restaff runs its chief's managing pass. A `band_order` entry needs the leader.
+- **`finish_scenario` then founds each faction's `tribes`** (`tribes::apply`, `leadership.md` → "Scenario
+  section") immediately after the leaders (a tribe needs a chief among its members) and before the labor replay.
 - **A chief's pass during the load leaves every source the file's labor rows name alone.** Just
   before `apply_leaders`, `finish_scenario` inserts `ScenarioLaborReservations`
   (`source_holders.rs`): each forage, hunt and extract `assign_labor` row's source → its band and

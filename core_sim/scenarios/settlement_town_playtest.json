@@ -1,0 +1,53 @@
+{
+  "name": "settlement_town_playtest",
+  "note": "A village tribe of four kin bands (about 540 people, three tiles apart) a storage pit short of a town: two builder bands are digging the pit at (13, 10).",
+  "world": {
+    "preset": "earthlike",
+    "width": 80,
+    "height": 52,
+    "seed": 41733,
+    "profile": "late_forager_tribe",
+    "archetypes": { "major": 0, "minor": 0 }
+  },
+  "factions": [
+    {
+      "faction": 0,
+      "knowledge": ["messengers", "ritual", "storage"],
+      "rungs": [
+        { "build_rung": {
+          "band": null, "verb": "dig", "target_x": 13, "target_y": 10,
+          "herd_id": null, "material": null, "branch": null } }
+      ],
+      "bands": [
+        { "id": "home", "at": [13, 11], "size": 150, "ages": { "children": 0.20, "working": 0.70, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 700.0 }], "leader": true },
+        { "id": "east", "at": [16, 11], "size": 150, "ages": { "children": 0.20, "working": 0.70, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 700.0 }], "leader": true },
+        { "id": "south", "at": [13, 14], "size": 150, "ages": { "children": 0.20, "working": 0.70, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 700.0 }], "leader": true },
+        { "id": "diggers_a", "at": [13, 8], "size": 40, "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 150.0 }] },
+        { "id": "diggers_b", "at": [10, 11], "size": 40, "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 150.0 }] },
+        { "id": "diggers_c", "at": [16, 14], "size": 40, "ages": { "children": 0.30, "working": 0.60, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 150.0 }] }
+      ],
+      "tribes": [
+        { "bands": ["home", "east", "south", "diggers_a", "diggers_b", "diggers_c"] }
+      ],
+      "labor": [
+        { "assign_labor": {
+          "band": "diggers_a", "role": "tile", "workers": 1, "take_species": [], "move_with_herd": false,
+          "target_x": 13, "target_y": 10, "species": "food_stores" } },
+        { "assign_labor": {
+          "band": "diggers_b", "role": "tile", "workers": 1, "take_species": [], "move_with_herd": false,
+          "target_x": 13, "target_y": 10, "species": "food_stores" } },
+        { "assign_labor": {
+          "band": "diggers_c", "role": "tile", "workers": 1, "take_species": [], "move_with_herd": false,
+          "target_x": 13, "target_y": 10, "species": "food_stores" } }
+      ],
+      "roads": [],
+      "pens": [],
+      "bench": []
+    }
+  ],
+  "tiles": [
+    { "at": [13, 11], "belief": 12.0 }
+  ],
+  "herds": [],
+  "deposits": []
+}

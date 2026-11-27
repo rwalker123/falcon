@@ -40,6 +40,7 @@ use crate::intensification::{LadderConfig, RungDef, RungTrait, SourceKind};
 use crate::labor_config::LaborConfigHandle;
 use crate::orders::FactionId;
 use crate::resources::{SimulationConfig, TileRegistry};
+use crate::tile_improvement::{tile_rung_span, TileImprovementRegistry};
 use crate::{
     pen_site_in_world, HerdRegistry, LadderConfigHandle, PopulationCohort, RungId, Tile, VerbId,
 };
@@ -106,6 +107,8 @@ enum HeldKind {
     Patch,
     Herd,
     Deposit,
+    /// A fixed store on one tile (the `food_stores` branch).
+    Tile,
 }
 
 impl HeldKind {
@@ -114,6 +117,7 @@ impl HeldKind {
             Some(SourceKind::Patch) => Ok(Self::Patch),
             Some(SourceKind::Herd) => Ok(Self::Herd),
             Some(SourceKind::Deposit) => Ok(Self::Deposit),
+            Some(SourceKind::Tile) => Ok(Self::Tile),
             Some(other) => Err(format!(
                 "a {} rung is not a `held` source a scenario can set",
                 other.as_str()
@@ -127,6 +131,7 @@ impl HeldKind {
             Self::Patch => "patch",
             Self::Herd => "herd",
             Self::Deposit => "deposit",
+            Self::Tile => "tile improvement",
         }
     }
 }
@@ -273,6 +278,7 @@ fn check_held(
     let source = match (kind, held.at, &held.herd, &held.material) {
         (HeldKind::Patch, Some([x, y]), _, _) => Some(format!("patch ({x}, {y})")),
         (HeldKind::Herd, _, Some(herd), _) => Some(format!("herd {herd}")),
+        (HeldKind::Tile, Some([x, y]), _, _) => Some(format!("{} at ({x}, {y})", held.rung)),
         (HeldKind::Deposit, Some([x, y]), _, Some(material)) => {
             Some(format!("{material} working at ({x}, {y})"))
         }
@@ -444,6 +450,21 @@ fn climb_held(world: &mut World, faction: FactionId, held: &HeldRung) -> Result<
                 };
                 (ladder.at_or_above(working.rung(), laid_id), target)
             }
+            HeldKind::Tile => {
+                let tile = tile.ok_or_else(|| format!("{named}: a tile store needs 'at'"))?;
+                let held_rung = world
+                    .resource::<TileImprovementRegistry>()
+                    .get(tile, laid_id.branch)
+                    .map(|improvement| improvement.held_rung());
+                let target = LaborTarget::Tile {
+                    tile,
+                    branch: laid_id.branch,
+                };
+                (
+                    held_rung.is_some_and(|rung| ladder.at_or_above(rung, laid_id)),
+                    target,
+                )
+            }
         };
         if holds {
             continue;
@@ -484,6 +505,12 @@ fn open_working(world: &mut World, tile: UVec2, material: &str, named: &str) -> 
 /// **The standing tile of the faction's band nearest `target`** by hex distance, ties to the lowest
 /// [`BandId`]. A scenario queues no Corral, so this band stands in for the one that would.
 fn nearest_band_tile(world: &mut World, faction: FactionId, target: UVec2) -> Option<UVec2> {
+    nearest_band(world, faction, target).map(|(_, position)| position)
+}
+
+/// **The faction's band nearest `target`** and its standing tile, by hex distance, ties to the lowest
+/// [`BandId`].
+fn nearest_band(world: &mut World, faction: FactionId, target: UVec2) -> Option<(BandId, UVec2)> {
     let (width, wrap) = {
         let tiles = world.resource::<TileRegistry>();
         let wrap = world
@@ -502,7 +529,6 @@ fn nearest_band_tile(world: &mut World, faction: FactionId, target: UVec2) -> Op
         .into_iter()
         .filter_map(|(id, tile)| Some((id, world.get::<Tile>(tile)?.position)))
         .min_by_key(|(id, position)| (hex_distance_wrapped(*position, target, width, wrap), *id))
-        .map(|(_, position)| position)
 }
 
 /// **Write what the game's own completion of `laid` leaves on the source**, through the source's
@@ -594,6 +620,17 @@ fn write_completion(
             if !herd.complete_rung_as_built(faction, laid, &fauna, ladder, pen_tile) {
                 return Err("the herd could not be raised (another people owns it)".to_string());
             }
+        }
+        HeldKind::Tile => {
+            let tile = tile.ok_or("a tile store needs 'at'")?;
+            // The store is kept by the band of the faction nearest it, as `build_rung`'s keeper would
+            // be: the owner a store needs to hold food (`settlement.rs` counts only an owned store).
+            let owner = nearest_band(world, faction, tile).map(|(id, _)| id);
+            let (base, width) = tile_rung_span(laid_id, ladder);
+            world
+                .resource_mut::<TileImprovementRegistry>()
+                .place_owned(tile, laid_id.branch, faction, owner, ladder)
+                .set_position(base + width, ladder);
         }
         HeldKind::Deposit => {
             let tile = tile.ok_or("a working needs 'at'")?;
