@@ -2758,3 +2758,4 @@ band already holds. `herd_id` is a scenario herd id, mapped to the runtime id at
 pass 1 when `band` names no band in the file, `verb` is not a ladder verb, or `herd_id` is not an id
 the file's `herds` section declares.
 
+**Export** writes `held` rungs for the patches and herds the faction owns above their branch's root (a patch with its committed crop) and the workings it has an `extract` row on, and a `build_rung` for each declared climb (deduplicated across the bands it is queued on; a road or band improvement names the declaring band, and one whose band has no scenario id is noted). Build progress toward the next rung is not written.

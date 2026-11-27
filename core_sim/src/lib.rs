@@ -307,9 +307,9 @@ pub use fauna::{
     HuntEngagement, HuntFight, HuntProjection, HuntTakeBound, HuntingParty, OutcomeKills,
     PartyResolution, PenSiteScene, PreyDatum, PreyReach, ProjectedHuntTurn, ProjectionStart,
     QuarryFight, RetreatOutcome, RoamState, SourceYieldForecast, TakeRange, TakeReading,
-    FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION, NO_DEATHS_TO_REPORT, NO_HANDS,
-    NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD, PENNING_DISCOVERY_ID,
-    SELECTIVE_BREEDING_DISCOVERY_ID,
+    WorldgenHerdRoster, FULLY_HERDED, HERDING_DISCOVERY_ID, MSY_BIOMASS_FRACTION,
+    NO_DEATHS_TO_REPORT, NO_HANDS, NO_STANDING_COMMITMENT, NO_USEFUL_CREW, ONE_KEEPER_LOAD,
+    PENNING_DISCOVERY_ID, SELECTIVE_BREEDING_DISCOVERY_ID,
 };
 pub use fauna_config::{
     load_fauna_config_from_env, Diet, EcologyConfig, FaunaConfig, FaunaConfigHandle,

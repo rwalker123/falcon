@@ -735,6 +735,13 @@ pub enum CommandPayload {
         request_id: u64,
         path: String,
     },
+    /// **DEV: write the live world out as a scenario file** (`docs/plan_scenarios.md` section 2.10).
+    /// Proto field 102. Changes no world, so it is not replayable; answered with a
+    /// [`QueryReply::ScenarioOp`]. A relative `path` resolves under the server's `SIM_SCENARIO_DIR`.
+    ExportScenario {
+        request_id: u64,
+        path: String,
+    },
     /// **One band's outfitting loadout.** Proto field 69, and the **one** source of a faction's
     /// starting gear and material — a spawning band owns nothing.
     ///
@@ -1315,8 +1322,11 @@ pub struct ScenarioOpReply {
     pub ok: bool,
     /// Echoes the path asked for.
     pub path: String,
-    /// Empty when `ok`; otherwise one `<path in the file>: <reason>` line per refusal.
+    /// Empty when `ok`; otherwise one `<path in the file>: <reason>` line per refusal. On an export
+    /// that was written: what the file's own pass 1 refused (the file is written regardless).
     pub refusals: Vec<String>,
+    /// An export only: what the live world holds that the file cannot say, one line each.
+    pub notes: Vec<String>,
 }
 
 /// The answer to a world-status query.
@@ -2760,6 +2770,12 @@ impl CommandEnvelope {
                     path: path.clone(),
                 })
             }
+            CommandPayload::ExportScenario { request_id, path } => {
+                pb::command_envelope::Command::ExportScenario(pb::ExportScenarioCommand {
+                    request_id: *request_id,
+                    path: path.clone(),
+                })
+            }
             CommandPayload::DeleteSave { request_id, slot } => {
                 pb::command_envelope::Command::DeleteSave(pb::DeleteSaveCommand {
                     request_id: *request_id,
@@ -3082,6 +3098,10 @@ impl CommandEnvelope {
                 slot: cmd.slot,
             },
             pb::command_envelope::Command::LoadScenario(cmd) => CommandPayload::LoadScenario {
+                request_id: cmd.request_id,
+                path: cmd.path,
+            },
+            pb::command_envelope::Command::ExportScenario(cmd) => CommandPayload::ExportScenario {
                 request_id: cmd.request_id,
                 path: cmd.path,
             },
@@ -3814,6 +3834,7 @@ impl QueryReplyEnvelope {
                     ok: reply.ok,
                     path: reply.path.clone(),
                     refusals: reply.refusals.clone(),
+                    notes: reply.notes.clone(),
                 })
             }
             QueryReply::WorldStatus(reply) => {
@@ -3994,6 +4015,7 @@ impl QueryReplyEnvelope {
                     ok: reply.ok,
                     path: reply.path,
                     refusals: reply.refusals,
+                    notes: reply.notes,
                 })
             }
             pb::query_reply_envelope::Reply::WorldStatus(reply) => {
@@ -4941,6 +4963,10 @@ mod tests {
             CommandPayload::LoadScenario {
                 request_id: 14,
                 path: "/abs/scenario.json".to_string(),
+            },
+            CommandPayload::ExportScenario {
+                request_id: 15,
+                path: "out.json".to_string(),
             },
         ] {
             let envelope = CommandEnvelope {

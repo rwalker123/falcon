@@ -923,6 +923,8 @@ is allowed, because over-cutting is a state the game reaches. The first played t
 first regrowth from the stock the file set. `core_sim/scenarios/deposits_playtest.json` is the
 playtest: a held, crewed felling working at 60 of its 100.
 
+**Export** writes every opened working's remaining stock (at most the tile's capacity), in `(x, y, material)` order.
+
 ## Config files
 
 | File | Purpose |

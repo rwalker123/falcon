@@ -289,6 +289,18 @@ fn command_subcommand(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         };
         return load_scenario_and_report(&host, port, &envelope);
     }
+    // **An export is answered too**: the reply names where the server wrote the file (under ITS
+    // `SIM_SCENARIO_DIR` when the path is relative) and what the file could not say.
+    if let CommandPayload::ExportScenario { path, .. } = payload {
+        let envelope = CommandEnvelope {
+            payload: CommandPayload::ExportScenario {
+                request_id: LOAD_SCENARIO_REQUEST_ID,
+                path,
+            },
+            correlation_id,
+        };
+        return load_scenario_and_report(&host, port, &envelope);
+    }
     let envelope = CommandEnvelope {
         payload,
         correlation_id,
@@ -357,7 +369,19 @@ fn load_scenario_and_report(
             continue;
         }
         if answer.ok {
-            println!("ok");
+            // A load says `ok`. An export says where the file landed, what it could not say, and
+            // what its own pass 1 would refuse (the file is written either way).
+            if matches!(envelope.payload, CommandPayload::ExportScenario { .. }) {
+                println!("wrote {}", answer.path);
+                for note in &answer.notes {
+                    println!("note: {note}");
+                }
+                for refusal in &answer.refusals {
+                    eprintln!("would not load: {refusal}");
+                }
+            } else {
+                println!("ok");
+            }
             return Ok(());
         }
         for refusal in &answer.refusals {

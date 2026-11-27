@@ -1731,6 +1731,8 @@ replay, when the faction's `knowledge` is already seeded. **The first replay ref
 `bench_auto_skip`). A
 scenario states the queue it wants.
 
+**Export** writes each band's queue head first as `bench_enqueue` (the count still to make) and one `bench_enqueue_kit` per kit order (its parts' recipes in queue order); orders auto-craft queued are not written, the band's `auto_craft` refills them.
+
 ## What is deliberately not wired
 
 **The panel itself.** The Rust half publishes; `docs/plan_crafting_and_materials.md` §8 and the client

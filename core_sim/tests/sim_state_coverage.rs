@@ -255,7 +255,13 @@ const WORLD_STATIC_RESOURCES: [&str; 17] = [
 ];
 
 /// Infrastructure, session-scoped, or not understood. The last three are the honest ones.
-const NOT_SIM_STATE_RESOURCES: [(&str, &str); 12] = [
+const NOT_SIM_STATE_RESOURCES: [(&str, &str); 13] = [
+    (
+        "WorldgenHerdRoster",
+        "what `spawn_initial_herds` made, kept for the scenario export to find a worldgen herd that \
+         has died out; write-once at world build and read only by the export, so a restore (which \
+         never ran the spawn) simply has none and the export notes it",
+    ),
     (
         "WorkKitWants",
         "the kit an open outfitting window's work wants - re-derived from the band's rows at every \

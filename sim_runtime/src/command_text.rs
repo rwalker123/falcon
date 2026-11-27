@@ -40,6 +40,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "load_scenario <path>",
     },
     CommandVerbHelp {
+        verb: "export_scenario",
+        aliases: &[],
+        summary: "DEV: write the live world out as a scenario file. A relative path resolves under SIM_SCENARIO_DIR (default ./scenarios); an absolute one is used as it is. Changes no world; what the file cannot say is listed as notes.",
+        usage: "export_scenario <path>",
+    },
+    CommandVerbHelp {
         verb: "order",
         aliases: &[],
         summary: "Submit orders for a faction (currently only 'ready').",
@@ -577,6 +583,17 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 return Err(CommandParseError::MissingArgument("path"));
             }
             Ok(CommandPayload::LoadScenario {
+                request_id: TEXT_VERB_REQUEST_ID,
+                path,
+            })
+        }
+        "export_scenario" => {
+            // The path is the rest of the line, as `load_scenario`'s is.
+            let path = parts.collect::<Vec<_>>().join(" ");
+            if path.is_empty() {
+                return Err(CommandParseError::MissingArgument("path"));
+            }
+            Ok(CommandPayload::ExportScenario {
                 request_id: TEXT_VERB_REQUEST_ID,
                 path,
             })

@@ -4005,6 +4005,7 @@ fn managed_dig_allocation(
         let cohort_stores = &cohort.stores;
         let on_hand = |material: &str| cohort_stores.material_total(material).to_f32();
         let rivals = crate::source_holders::SourceHolders::from_world(world)
+            .with_reservations(world)
             .for_band(world.get::<BandId>(band).copied(), faction);
         crate::keep_on_hand::manage_dig_rows(
             &mut allocation,

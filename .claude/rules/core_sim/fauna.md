@@ -1435,7 +1435,7 @@ touches anything. Herds are a setter, so they apply before the outfit replay.
   non-carnivore, then every placed carnivore. The prey index the carnivore's gate and K read is built
   after the first two groups, so a thinned worldgen prey herd counts at its new stock and a placed
   herbivore counts. Refusals are reported in file order.
-- **Worldgen** names the one unowned herd of that species standing on `at` when the finish runs (after
+- **Worldgen** names the one unowned herd of that species whose spawn tile (`route[0]`) is `at`, else the one standing on `at` when the finish runs (after
   the build turn), and sets its biomass to `stock x herd_capacity` (its live ecological K). None, several, or an owned one are
   refused; the none case names the nearest.
 - A stock the herd would be dispersed under on its first turn is refused at `herds[i].stock`, for
@@ -1447,3 +1447,5 @@ touches anything. Herds are a setter, so they apply before the outfit replay.
   `ScenarioApplied.herds` maps file id to runtime id.
 
 The loader, the apply order and the refusal contract are `scenarios.md`.
+
+**Export** writes every herd: a worldgen herd (`herd_`, `game_` within the initial cap and the build turn's immigrant, `pred_`) as `origin: worldgen` at its spawn tile (`route[0]`), anything else as `placed` at its current tile (the nearest tile that passes the placement predicate, with a note, when that tile fails it); `stock` is biomass over its current capacity, clamped to `(0, 1]`. A herd standing away from its spawn tile, one over capacity and one whose species is not in the roster are noted. A worldgen herd that has died out (in `WorldgenHerdRoster`, no longer in the registry, or at zero stock) is written as a `gone: true` entry at its spawn tile, and the loader despawns it (`scenarios.md` → Export).
