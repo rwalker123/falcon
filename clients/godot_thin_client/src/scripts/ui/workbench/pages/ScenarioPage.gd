@@ -33,6 +33,8 @@ var _doc: Variant = null
 var _saved_canon := ""
 ## True for a file created in-page and never saved.
 var _is_new := false
+## The export path the open document was read from, when it was not a fixture; `""` otherwise.
+var _opened_from := ""
 var _schema: Dictionary = {}
 var _files: Array = []
 var _list_pending := false
@@ -203,9 +205,11 @@ func _fill_file_picker() -> void:
 	_file_picker.add_item(WorkbenchVocab.SCENARIO_FILE_PLACEHOLDER)
 	var selected := 0
 	for i in _files.size():
-		_file_picker.add_item(String(_files[i]).trim_prefix(WorkbenchVocab.SCENARIO_DIR_PREFIX))
-		_file_picker.set_item_metadata(i + 1, String(_files[i]))
-		if String(_files[i]) == _path:
+		var listed := String(_files[i])
+		_file_picker.add_item(listed.trim_prefix(WorkbenchVocab.SCENARIO_DIR_PREFIX)
+			if _is_fixture_path(listed) else WorkbenchVocab.SCENARIO_EXPORT_ITEM_FORMAT % listed.get_file())
+		_file_picker.set_item_metadata(i + 1, listed)
+		if listed == (_opened_from if not _opened_from.is_empty() else _path):
 			selected = i + 1
 	_file_picker.select(selected)
 
@@ -216,7 +220,7 @@ func _on_file_chosen(index: int) -> void:
 		_fill_file_picker()
 		return
 	var path := String(_file_picker.get_item_metadata(index))
-	if path == _path:
+	if path == (_opened_from if not _opened_from.is_empty() else _path):
 		return
 	if _is_dirty():
 		# The press that asked is undone and a second one is asked for.
@@ -270,10 +274,13 @@ func adopt_text(path: String, text: String) -> bool:
 	var doc: Dictionary = json.data
 	if not _schema.is_empty():
 		doc = ScenarioSchema.normalize(doc, _schema)
-	_path = path
+	# A file outside the fixture directory is an export: the document is what was read, but the path is
+	# the fixture one it would save to, and nothing is saved there yet — so it is dirty and Load waits.
+	_opened_from = "" if _is_fixture_path(path) else path
+	_path = path if _opened_from.is_empty() else WorkbenchVocab.SCENARIO_DIR_PREFIX + path.get_file()
 	_doc = doc
-	_is_new = false
-	_saved_canon = _stringify(doc)
+	_is_new = not _opened_from.is_empty()
+	_saved_canon = "" if _is_new else _stringify(doc)
 	_refusals = []
 	_banner_lines = []
 	_pending_open = ""
@@ -322,6 +329,7 @@ func _on_new_pressed() -> void:
 		_render_banner([])
 		return
 	_path = path
+	_opened_from = ""
 	_doc = ScenarioSchema.skeleton(_schema)
 	_is_new = true
 	_saved_canon = ""
@@ -353,6 +361,7 @@ func _on_save_reply(reply: Dictionary, text: String, path: String) -> void:
 	if bool(reply.get(WorkbenchVocab.SCENARIO_REPLY_OK, false)):
 		_saved_canon = text
 		_is_new = false
+		_opened_from = ""
 		_refusals = []
 		_banner_lines = []
 		log_line(WorkbenchVocab.SCENARIO_SAVED_LOG % path)
@@ -419,6 +428,10 @@ func _show_failure(reply: Dictionary, path: String) -> void:
 static func _stringify(doc: Variant) -> String:
 	return JSON.stringify(doc, WorkbenchVocab.SCENARIO_INDENT, false, true) \
 		+ WorkbenchVocab.SCENARIO_TRAILING_NEWLINE
+
+
+static func _is_fixture_path(path: String) -> bool:
+	return path.begins_with(WorkbenchVocab.SCENARIO_DIR_PREFIX)
 
 
 func _is_dirty() -> bool:
@@ -538,6 +551,8 @@ func _status_text(dirty: bool) -> String:
 		return _outcome
 	if _path.is_empty():
 		return WorkbenchVocab.SCENARIO_NO_FILE
+	if not _opened_from.is_empty():
+		return WorkbenchVocab.SCENARIO_EXPORT_STATUS % [_opened_from.get_file(), _path]
 	if _is_new:
 		return WorkbenchVocab.SCENARIO_NEW_STATUS % _path
 	if dirty:

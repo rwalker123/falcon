@@ -238,7 +238,13 @@ const SCENARIO_KIND_READ := "read_scenario"
 const SCENARIO_KIND_WRITE := "write_scenario"
 const SCENARIO_KIND_LOAD := "load_scenario"
 ## The directory the server accepts scenario files in, as a path prefix a new file's name goes after.
+## The FIXTURE directory — the only one `write_scenario` accepts; matches the server's `SCENARIO_DIR`. A
+## file whose path does not start with this is an export (`list_scenarios` lists those after the fixtures).
 const SCENARIO_DIR_PREFIX := "core_sim/scenarios/"
+## A dropdown entry for an exported file: `%s` is its basename.
+const SCENARIO_EXPORT_ITEM_FORMAT := "export · %s"
+## The footer's line for a file opened from an export: it will save to the fixture path.
+const SCENARIO_EXPORT_STATUS := "Opened from export %s — saves to %s. Load after Save."
 const SCENARIO_FILE_SUFFIX := ".json"
 ## The reply keys of the scenario answer (`answer_to_dict`).
 const SCENARIO_REPLY_OK := "ok"

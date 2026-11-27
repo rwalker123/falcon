@@ -125,6 +125,70 @@ pub fn resolve_scenario_path(base: &Path, path: &str) -> Result<PathBuf, Scenari
     Ok(base.join(normal))
 }
 
+/// **The path `read_scenario` accepts: the fixture directory's, or the export directory's.**
+/// `export_dir` is where `export_scenario` writes (the server resolves it from `SIM_SCENARIO_DIR`),
+/// relative to `base` or absolute. A path that fits neither is refused with the fixture
+/// directory's sentence. `write_scenario` does NOT use this: it takes [`resolve_scenario_path`]
+/// alone, because an export is trimmed in the editor and saved as a reviewed fixture.
+pub fn resolve_scenario_read_path(
+    base: &Path,
+    export_dir: &Path,
+    path: &str,
+) -> Result<PathBuf, ScenarioRefusal> {
+    resolve_scenario_path(base, path)
+        .or_else(|refusal| resolve_export_path(base, export_dir, path).ok_or(refusal))
+}
+
+/// `path` as a `*.json` file directly inside `export_dir`, both read against `base` and folded
+/// lexically. `None` when it is anywhere else.
+fn resolve_export_path(base: &Path, export_dir: &Path, path: &str) -> Option<PathBuf> {
+    let dir = normalize_rooted(&base.join(export_dir))?;
+    let file = normalize_rooted(&base.join(path))?;
+    let in_dir = file.parent() == Some(dir.as_path());
+    let is_scenario = file.extension().and_then(|ext| ext.to_str()) == Some(SCENARIO_EXTENSION);
+    (in_dir && is_scenario).then_some(file)
+}
+
+/// Like [`lexical_normalize`] but keeps a root or drive prefix, for a path that may be absolute.
+fn normalize_rooted(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            Component::Normal(part) => out.push(part),
+            Component::RootDir | Component::Prefix(_) => out.push(component.as_os_str()),
+        }
+    }
+    Some(out)
+}
+
+/// The `*.json` files directly in the export directory, sorted, each spelled `<export_dir>/<name>`
+/// (as the server was configured, so it is a path [`resolve_scenario_read_path`] accepts). A
+/// directory that is absent or unreadable lists nothing.
+pub fn list_export_files(base: &Path, export_dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(base.join(export_dir)) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| {
+            Path::new(name).extension().and_then(|ext| ext.to_str()) == Some(SCENARIO_EXTENSION)
+        })
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| export_dir.join(name).to_string_lossy().into_owned())
+        .collect()
+}
+
 /// Fold `.` and `..` out of a relative path without touching the disk. `None` when a `..` would
 /// climb above the path's own start, or the path is rooted.
 fn lexical_normalize(path: &Path) -> Option<PathBuf> {

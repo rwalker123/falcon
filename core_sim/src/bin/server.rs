@@ -742,7 +742,8 @@ fn main() {
             // builds a trial candidate and drops it, so the live app, `world_active`, `world_epoch`,
             // the sink and the command log are not even passed in.
             Command::ListScenarios { request_id, reply } => {
-                let answer = handle_list_scenarios(Path::new(SCENARIO_BASE_DIR));
+                let answer =
+                    handle_list_scenarios(Path::new(SCENARIO_BASE_DIR), &scenario_export_dir());
                 answer_scenario_op(&reply, request_id, answer);
                 continue;
             }
@@ -751,7 +752,11 @@ fn main() {
                 path,
                 reply,
             } => {
-                let answer = handle_read_scenario(Path::new(SCENARIO_BASE_DIR), &path);
+                let answer = handle_read_scenario(
+                    Path::new(SCENARIO_BASE_DIR),
+                    &scenario_export_dir(),
+                    &path,
+                );
                 answer_scenario_op(&reply, request_id, answer);
                 continue;
             }
@@ -3122,17 +3127,22 @@ const SCENARIO_DIR_ENV: &str = "SIM_SCENARIO_DIR";
 /// working directory.
 const DEFAULT_SCENARIO_DIR: &str = "scenarios";
 
+/// The directory `export_scenario` writes a relative path under: `SIM_SCENARIO_DIR` (default
+/// `./scenarios`). `list_scenarios` and `read_scenario` also look here.
+fn scenario_export_dir() -> PathBuf {
+    std::env::var_os(SCENARIO_DIR_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_SCENARIO_DIR))
+}
+
 /// Where an `export_scenario` path is written: an absolute path as it is, a relative one under
-/// `SIM_SCENARIO_DIR` (default `./scenarios`).
+/// [`scenario_export_dir`].
 fn scenario_export_path(requested: &str) -> PathBuf {
     let requested = PathBuf::from(requested);
     if requested.is_absolute() {
         return requested;
     }
-    std::env::var_os(SCENARIO_DIR_ENV)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_SCENARIO_DIR))
-        .join(requested)
+    scenario_export_dir().join(requested)
 }
 
 /// A failed export: nothing was written. `ok` is false and the one refusal names the cause.
@@ -3213,21 +3223,33 @@ fn handle_export_scenario(
     }
 }
 
-/// **`list_scenarios`**: the scenario directory's `*.json` files and the scenario file's schema.
-fn handle_list_scenarios(base: &Path) -> sim_runtime::ScenarioOpReply {
+/// **`list_scenarios`**: the fixture directory's `*.json` files, then the export directory's, and
+/// the scenario file's schema. An export directory that is missing adds nothing.
+fn handle_list_scenarios(base: &Path, export_dir: &Path) -> sim_runtime::ScenarioOpReply {
+    let mut files = core_sim::scenario::list_scenario_files(base);
+    for exported in core_sim::scenario::list_export_files(base, export_dir) {
+        if !files.contains(&exported) {
+            files.push(exported);
+        }
+    }
     sim_runtime::ScenarioOpReply {
         ok: true,
-        files: core_sim::scenario::list_scenario_files(base),
+        files,
         schema: core_sim::scenario::scenario_schema().to_string(),
         ..Default::default()
     }
 }
 
-/// **`read_scenario`**: the file's text, verbatim. A path outside the policy, or a read failure, is
-/// a refusal at [`core_sim::scenario::FILE_REFUSAL_PATH`].
-fn handle_read_scenario(base: &Path, path: &str) -> sim_runtime::ScenarioOpReply {
-    use core_sim::scenario::{resolve_scenario_path, ScenarioRefusal, FILE_REFUSAL_PATH};
-    let file = match resolve_scenario_path(base, path) {
+/// **`read_scenario`**: the file's text, verbatim, from the fixture directory or the export
+/// directory. A path outside both, or a read failure, is a refusal at
+/// [`core_sim::scenario::FILE_REFUSAL_PATH`].
+fn handle_read_scenario(
+    base: &Path,
+    export_dir: &Path,
+    path: &str,
+) -> sim_runtime::ScenarioOpReply {
+    use core_sim::scenario::{resolve_scenario_read_path, ScenarioRefusal, FILE_REFUSAL_PATH};
+    let file = match resolve_scenario_read_path(base, export_dir, path) {
         Ok(file) => file,
         Err(refusal) => return scenario_refused(path, vec![refusal]),
     };
@@ -11976,6 +11998,8 @@ mod tests {
     }
 
     const EDITOR_TARGET: &str = "core_sim/scenarios/kept_roads.json";
+    /// The export directory the editor-verb tests point at, relative to the test's own `base`.
+    const EXPORT_DIR: &str = "scenarios";
 
     /// A file that parses and resolves every name but cannot be BUILT: its band stands off the map.
     /// Only the trial build finds it, which is the point of `write_scenario`.
@@ -12112,7 +12136,7 @@ mod tests {
                 "{path}: {:?}",
                 write.refusals
             );
-            let read = handle_read_scenario(&base, path);
+            let read = handle_read_scenario(&base, std::path::Path::new(EXPORT_DIR), path);
             assert!(!read.ok, "{path} must be refused for read");
             assert!(read.text.is_empty());
         }
@@ -12144,7 +12168,7 @@ mod tests {
         std::fs::write(dir.join("a.json"), " {\"a\":2}").expect("write");
         std::fs::write(dir.join("notes.txt"), "no").expect("write");
 
-        let listed = handle_list_scenarios(&base);
+        let listed = handle_list_scenarios(&base, std::path::Path::new(EXPORT_DIR));
         assert!(listed.ok);
         assert_eq!(
             listed.files,
@@ -12157,14 +12181,87 @@ mod tests {
         assert_eq!(schema["additionalProperties"], false);
         assert!(schema["properties"]["factions"].is_object());
 
-        let read = handle_read_scenario(&base, &listed.files[0]);
+        let read = handle_read_scenario(&base, std::path::Path::new(EXPORT_DIR), &listed.files[0]);
         assert!(read.ok);
         assert_eq!(read.path, "core_sim/scenarios/a.json");
         assert_eq!(read.text, " {\"a\":2}", "verbatim");
 
-        let missing = handle_read_scenario(&base, "core_sim/scenarios/gone.json");
+        let missing = handle_read_scenario(
+            &base,
+            std::path::Path::new(EXPORT_DIR),
+            "core_sim/scenarios/gone.json",
+        );
         assert!(!missing.ok);
         assert!(missing.refusals[0].starts_with("<file>: cannot read"));
+    }
+
+    /// **An export opens in the editor, and only saves as a fixture.** The list is the fixtures,
+    /// then the export directory's files; a read takes a `.json` directly in either directory and
+    /// still refuses everything else; a missing export directory is just no entries; a write
+    /// into the export directory is refused, because only the fixture directory is writable.
+    #[test]
+    fn an_export_can_be_listed_and_read_but_not_written_in_place() {
+        let mut app = build_test_app();
+        app.insert_resource(CommandSenderResource(unbounded::<CommandDelivery>().0));
+        let base = scenario_base("exports");
+
+        let before = handle_list_scenarios(&base, std::path::Path::new(EXPORT_DIR));
+        assert!(before.ok, "a missing export directory is not an error");
+        assert!(before.files.is_empty());
+
+        let fixtures = base.join(core_sim::scenario::SCENARIO_DIR);
+        std::fs::write(fixtures.join("fixture.json"), "{\"f\":1}").expect("write");
+        let exports = base.join(EXPORT_DIR);
+        std::fs::create_dir_all(&exports).expect("export dir");
+        std::fs::write(exports.join("b_export.json"), "{\"b\":2}").expect("write");
+        std::fs::write(exports.join("a_export.json"), "{\"a\":3}").expect("write");
+        std::fs::write(exports.join("notes.txt"), "no").expect("write");
+
+        let listed = handle_list_scenarios(&base, std::path::Path::new(EXPORT_DIR));
+        assert_eq!(
+            listed.files,
+            vec![
+                "core_sim/scenarios/fixture.json".to_string(),
+                "scenarios/a_export.json".to_string(),
+                "scenarios/b_export.json".to_string(),
+            ],
+            "fixtures first, then exports, each sorted"
+        );
+        for file in &listed.files {
+            assert!(
+                handle_read_scenario(&base, std::path::Path::new(EXPORT_DIR), file).ok,
+                "{file}"
+            );
+        }
+        let read = handle_read_scenario(
+            &base,
+            std::path::Path::new(EXPORT_DIR),
+            "scenarios/a_export.json",
+        );
+        assert_eq!(read.text, "{\"a\":3}", "verbatim");
+
+        for path in [
+            "scenarios/../a_export.json",
+            "scenarios/sub/a_export.json",
+            "scenarios/notes.txt",
+            "other/a_export.json",
+            "/etc/a_export.json",
+        ] {
+            assert!(
+                !handle_read_scenario(&base, std::path::Path::new(EXPORT_DIR), path).ok,
+                "{path} must be refused for read"
+            );
+        }
+
+        let write =
+            handle_write_scenario(&app, &base, "scenarios/a_export.json", &kept_roads_text());
+        assert!(!write.ok, "an export is not written in place");
+        assert!(write.refusals[0].starts_with("<file>: "));
+        assert_eq!(
+            std::fs::read_to_string(exports.join("a_export.json")).expect("read"),
+            "{\"a\":3}",
+            "the export is untouched"
+        );
     }
 
     /// **Save, then load into the running server, through the command handlers.**

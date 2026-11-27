@@ -189,15 +189,23 @@ Three dev verbs for the Workbench's scenario editor, answered on the asking conn
 `load_scenario` is (`answer_scenario_op`, the same `request_id`), and in `is_replayable`'s exclusion
 list beside `LoadScenario`. None of them touches a world.
 
-- **Path policy (read and write).** The path is read against the server's working directory
+- **Path policy (read and write).** The write path is read against the server's working directory
   (`SCENARIO_BASE_DIR`, `.`; `run_stack.sh` runs the server from the repo root), folded lexically
   (`.` and `..` removed without touching the disk), and must be a file **directly inside**
   `SCENARIO_DIR` (`core_sim/scenarios`) ending in `.json`. A `..` that climbs out, a subdirectory, a
   wrong extension or an absolute path outside the directory is refused at `FILE_REFUSAL_PATH` with a
   sentence saying why. `load_scenario`'s own path handling is unchanged: xtask and `run_stack.sh`
   pass absolute paths.
-- **`list_scenarios`** answers `files` (the directory's `*.json`, sorted, spelled
-  `core_sim/scenarios/<name>.json`, so each is a path the other two accept) and `schema`.
+- **Read and list also see the export directory; write does not.** `export_scenario` writes under
+  `SIM_SCENARIO_DIR` (`scenario_export_dir()` in `bin/server.rs`, default `./scenarios`), so
+  `list_scenarios` and `read_scenario` take a `*.json` directly inside **either** directory, by the
+  same lexical no-escape rule (`resolve_scenario_read_path`; the export directory may be absolute).
+  `write_scenario` takes `resolve_scenario_path` alone, fixture directory only: an export is opened,
+  trimmed in the editor and **saved as a reviewed fixture** in `core_sim/scenarios` (plan §2.10), never
+  rewritten in place, so the editor never overwrites what the exporter produced.
+- **`list_scenarios`** answers `files` (the fixture directory's `*.json` sorted, spelled
+  `core_sim/scenarios/<name>.json`, then the export directory's sorted, spelled `<export dir>/<name>.json`;
+  each is a path `read_scenario` accepts, and a missing export directory adds nothing) and `schema`.
 - **`read_scenario`** answers `text`, the file verbatim; a read failure is a refusal at `<file>`.
 - **`write_scenario` writes only a file that would load, and the check is a trial build.** The text
   goes through `build_scenario_candidate` (pass 1 against the live app's configs, then

@@ -24,6 +24,8 @@ const INVENTED_SECTION_KEY := "ember_count"
 const INVENTED_SECTION_VALUE := 31
 
 const FILE_PATH := "core_sim/scenarios/herds_pens_playtest.json"
+const EXPORT_PATH := "scenarios/exported_world.json"
+const EXPORT_FIXTURE_PATH := "core_sim/scenarios/exported_world.json"
 const OTHER_FILE_PATH := "core_sim/scenarios/kept_roads.json"
 
 ## Paths into the fixture document the assertions drive.
@@ -100,6 +102,10 @@ func run(h: Node) -> void:
 	await h._save("workbench_scenario_refused")
 
 	_assert_switch_while_dirty()
+
+	await _assert_export_opens_as_a_fixture_target()
+	await h._settle()
+	await h._save("workbench_scenario_export")
 
 	h._shell.set_rail_collapsed(true)
 	await h._settle()
@@ -539,3 +545,29 @@ func _assert_switch_while_dirty() -> void:
 	var expected: Variant = ScenarioSchema.skeleton(_schema)
 	_assert(_page.document() == expected, "New builds the schema's skeleton document")
 
+
+
+# ---- an export opens as a fixture target ---------------------------------------
+
+func _assert_export_opens_as_a_fixture_target() -> void:
+	_page._refusals = []
+	_page.adopt_schema(_schema, [FILE_PATH, OTHER_FILE_PATH, EXPORT_PATH])
+	var export_item := -1
+	for i in _page._file_picker.item_count:
+		if _page._file_picker.get_item_metadata(i) == EXPORT_PATH:
+			export_item = i
+	_assert(export_item > 0 and _page._file_picker.get_item_text(export_item) == WorkbenchVocab.SCENARIO_EXPORT_ITEM_FORMAT % "exported_world.json",
+		"an exported file is listed with its own label and keeps the real path as metadata")
+	_assert(_page.adopt_text(EXPORT_PATH, _doc_text()), "an export's text parses")
+	_assert(_page.current_path() == EXPORT_FIXTURE_PATH, "opening an export targets the fixture path (got %s)" % _page.current_path())
+	_assert(_page._is_dirty(), "an opened export is dirty — nothing is saved at the fixture path yet")
+	_assert(_page._load_button.disabled, "Load stays disabled until the export is saved as a fixture")
+	_assert(not _page._save_button.disabled, "Save is live on an opened export")
+	_assert(_page._status.text.contains(EXPORT_PATH.get_file()) and _page._status.text.contains(EXPORT_FIXTURE_PATH),
+		"the footer says where it was opened from and where it saves")
+	_assert(_page._status.get_line_count() <= 2, "the footer line is at most two lines")
+	_requests.clear()
+	_page._on_save_pressed()
+	var writes := _requests.filter(func(r: Dictionary) -> bool: return r["kind"] == WorkbenchVocab.SCENARIO_KIND_WRITE)
+	_assert(writes.size() == 1 and writes[0]["args"]["path"] == EXPORT_FIXTURE_PATH, "Save sends write_scenario with the fixture path")
+	_assert(not _page._is_dirty() and not _page._load_button.disabled, "after Save the file is clean and Load is live")

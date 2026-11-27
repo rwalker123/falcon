@@ -482,3 +482,9 @@ an allow-list in the walker fails it alone); the content column fits; refusals a
 expand their ancestors and send unmatched lines to the banner (sabotage-verified with shortest-prefix
 attachment); add / remove / optional-key / pick edits produce the expected document; the page degrades with
 no services.
+
+**Exports open as fixture targets.** `list_scenarios` also lists exported files (outside `core_sim/scenarios/`,
+after the fixtures); the dropdown labels them `export · name.json` and keeps the real path as item metadata. Opening
+one reads it, but the page's path becomes `core_sim/scenarios/<same basename>` (`WorkbenchVocab.SCENARIO_DIR_PREFIX`,
+matching the server's fixture dir) and the document is dirty, since nothing is saved there — so Load stays
+disabled until Save, and the footer says where it was opened from and where it saves.
