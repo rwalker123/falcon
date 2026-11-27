@@ -7,57 +7,509 @@
     "height": 52,
     "seed": 41733,
     "profile": "late_forager_tribe",
-    "archetypes": { "major": 0, "minor": 0 }
+    "archetypes": {
+      "major": 0,
+      "minor": 0
+    }
   },
   "factions": [
     {
       "faction": 0,
-      "knowledge": ["messengers", "ritual", "storage", "knapping", "woodcraft", "bone_working", "tanning", "weaving", "herd_lore", "travois", "cultivation", "herding", "granaries", "quarrying", "roadbuilding", "penning", "seed_selection", "worked_land"],
+      "knowledge": [
+        "messengers",
+        "ritual",
+        "storage",
+        "knapping",
+        "woodcraft",
+        "bone_working",
+        "tanning",
+        "weaving",
+        "herd_lore",
+        "travois",
+        "cultivation",
+        "herding",
+        "granaries",
+        "quarrying",
+        "roadbuilding",
+        "penning",
+        "seed_selection",
+        "worked_land"
+      ],
       "rungs": [
-        { "held": { "rung": "food_stores:storage_pit", "at": [13, 10] } },
-        { "build_rung": {
-          "band": null, "verb": "store", "target_x": 13, "target_y": 10,
-          "herd_id": null, "material": null, "branch": null, "progress": 105.0 } }
+        {
+          "held": {
+            "rung": "food_stores:storage_pit",
+            "at": [
+              13,
+              10
+            ]
+          }
+        },
+        {
+          "build_rung": {
+            "band": null,
+            "verb": "store",
+            "target_x": 13,
+            "target_y": 10,
+            "herd_id": null,
+            "material": null,
+            "branch": null,
+            "progress": 105.0
+          }
+        }
       ],
       "bands": [
-        { "id": "home", "at": [13, 11], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true },
-        { "id": "east", "at": [16, 11], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true },
-        { "id": "west", "at": [10, 11], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true },
-        { "id": "south", "at": [13, 14], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true },
-        { "id": "southeast", "at": [16, 14], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true },
-        { "id": "southwest", "at": [10, 14], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true },
-        { "id": "fareast_south", "at": [19, 14], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true },
-        { "id": "fareast", "at": [19, 11], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true },
-        { "id": "farwest", "at": [7, 11], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true },
-        { "id": "farsouthwest", "at": [7, 14], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true }
+        {
+          "id": "home",
+          "at": [
+            13,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.10,
+            "working": 0.80,
+            "elders": 0.10
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true
+        },
+        {
+          "id": "east",
+          "at": [
+            16,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.10,
+            "working": 0.80,
+            "elders": 0.10
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true
+        },
+        {
+          "id": "west",
+          "at": [
+            10,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.10,
+            "working": 0.80,
+            "elders": 0.10
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true
+        },
+        {
+          "id": "south",
+          "at": [
+            13,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.10,
+            "working": 0.80,
+            "elders": 0.10
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true
+        },
+        {
+          "id": "southeast",
+          "at": [
+            16,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.10,
+            "working": 0.80,
+            "elders": 0.10
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true
+        },
+        {
+          "id": "southwest",
+          "at": [
+            10,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.10,
+            "working": 0.80,
+            "elders": 0.10
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true
+        },
+        {
+          "id": "fareast_south",
+          "at": [
+            19,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.10,
+            "working": 0.80,
+            "elders": 0.10
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true
+        },
+        {
+          "id": "fareast",
+          "at": [
+            19,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.10,
+            "working": 0.80,
+            "elders": 0.10
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true
+        },
+        {
+          "id": "farwest",
+          "at": [
+            7,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.10,
+            "working": 0.80,
+            "elders": 0.10
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true
+        },
+        {
+          "id": "farsouthwest",
+          "at": [
+            7,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.10,
+            "working": 0.80,
+            "elders": 0.10
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true
+        }
       ],
       "tribes": [
-        { "bands": ["home", "east", "west", "south", "southeast", "southwest", "fareast_south", "fareast", "farwest", "farsouthwest"] }
+        {
+          "bands": [
+            "home",
+            "east",
+            "west",
+            "south",
+            "southeast",
+            "southwest",
+            "fareast_south",
+            "fareast",
+            "farwest",
+            "farsouthwest"
+          ]
+        }
       ],
       "labor": [
-        { "assign_labor": { "band": "home", "role": "tile", "workers": 80, "take_species": [], "move_with_herd": false, "target_x": 13, "target_y": 10, "species": "food_stores" } },
-        { "band_order": { "band": "home", "kind": "food", "action": "release" } },
-        { "assign_labor": { "band": "home", "role": "forage", "workers": 15, "take_species": [], "move_with_herd": false, "target_x": 12, "target_y": 13 } },
-        { "assign_labor": { "band": "home", "role": "hunt", "workers": 5, "take_species": [], "move_with_herd": false, "fauna_id": "boar_a" } },
-        { "assign_labor": { "band": "east", "role": "forage", "workers": 15, "take_species": [], "move_with_herd": false, "target_x": 18, "target_y": 12 } },
-        { "band_order": { "band": "east", "kind": "food", "action": "release", "herd_id": "fowl_a" } },
-        { "assign_labor": { "band": "east", "role": "hunt", "workers": 5, "take_species": [], "move_with_herd": false, "fauna_id": "fowl_a" } },
-        { "assign_labor": { "band": "west", "role": "forage", "workers": 15, "take_species": [], "move_with_herd": false, "target_x": 9, "target_y": 11 } },
-        { "band_order": { "band": "west", "kind": "food", "action": "release", "herd_id": "sheep_a" } },
-        { "assign_labor": { "band": "west", "role": "hunt", "workers": 5, "take_species": [], "move_with_herd": false, "fauna_id": "sheep_a" } },
-        { "assign_labor": { "band": "south", "role": "forage", "workers": 15, "take_species": [], "move_with_herd": false, "target_x": 14, "target_y": 14 } },
-        { "band_order": { "band": "south", "kind": "food", "action": "release", "herd_id": "sheep_b" } },
-        { "assign_labor": { "band": "south", "role": "hunt", "workers": 5, "take_species": [], "move_with_herd": false, "fauna_id": "sheep_b" } },
-        { "assign_labor": { "band": "southeast", "role": "forage", "workers": 15, "take_species": [], "move_with_herd": false, "target_x": 18, "target_y": 14 } },
-        { "band_order": { "band": "southeast", "kind": "food", "action": "release", "herd_id": "rabbit_a" } },
-        { "assign_labor": { "band": "southeast", "role": "hunt", "workers": 5, "take_species": [], "move_with_herd": false, "fauna_id": "rabbit_a" } },
-        { "assign_labor": { "band": "southwest", "role": "forage", "workers": 15, "take_species": [], "move_with_herd": false, "target_x": 10, "target_y": 15 } },
-        { "assign_labor": { "band": "fareast_south", "role": "forage", "workers": 15, "take_species": [], "move_with_herd": false, "target_x": 20, "target_y": 14 } },
-        { "assign_labor": { "band": "fareast", "role": "forage", "workers": 15, "take_species": [], "move_with_herd": false, "target_x": 20, "target_y": 12 } },
-        { "band_order": { "band": "fareast", "kind": "food", "action": "release", "herd_id": "fowl_b" } },
-        { "assign_labor": { "band": "fareast", "role": "hunt", "workers": 5, "take_species": [], "move_with_herd": false, "fauna_id": "fowl_b" } },
-        { "assign_labor": { "band": "farwest", "role": "hunt", "workers": 5, "take_species": [], "move_with_herd": false, "fauna_id": "boar_b" } },
-        { "assign_labor": { "band": "farsouthwest", "role": "forage", "workers": 15, "take_species": [], "move_with_herd": false, "target_x": 6, "target_y": 14 } }
+        {
+          "assign_labor": {
+            "band": "home",
+            "role": "tile",
+            "workers": 80,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 13,
+            "target_y": 10,
+            "species": "food_stores"
+          }
+        },
+        {
+          "band_order": {
+            "band": "home",
+            "kind": "food",
+            "action": "release"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "home",
+            "role": "forage",
+            "workers": 15,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 12,
+            "target_y": 13
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "home",
+            "role": "hunt",
+            "workers": 5,
+            "take_species": [],
+            "move_with_herd": false,
+            "fauna_id": "boar_a"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "east",
+            "role": "forage",
+            "workers": 15,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 18,
+            "target_y": 12
+          }
+        },
+        {
+          "band_order": {
+            "band": "east",
+            "kind": "food",
+            "action": "release"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "east",
+            "role": "hunt",
+            "workers": 5,
+            "take_species": [],
+            "move_with_herd": false,
+            "fauna_id": "fowl_a"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "west",
+            "role": "forage",
+            "workers": 15,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 9,
+            "target_y": 11
+          }
+        },
+        {
+          "band_order": {
+            "band": "west",
+            "kind": "food",
+            "action": "release"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "west",
+            "role": "hunt",
+            "workers": 5,
+            "take_species": [],
+            "move_with_herd": false,
+            "fauna_id": "sheep_a"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "south",
+            "role": "forage",
+            "workers": 15,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 14,
+            "target_y": 14
+          }
+        },
+        {
+          "band_order": {
+            "band": "south",
+            "kind": "food",
+            "action": "release"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "south",
+            "role": "hunt",
+            "workers": 5,
+            "take_species": [],
+            "move_with_herd": false,
+            "fauna_id": "sheep_b"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "southeast",
+            "role": "forage",
+            "workers": 15,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 18,
+            "target_y": 14
+          }
+        },
+        {
+          "band_order": {
+            "band": "southeast",
+            "kind": "food",
+            "action": "release"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "southeast",
+            "role": "hunt",
+            "workers": 5,
+            "take_species": [],
+            "move_with_herd": false,
+            "fauna_id": "rabbit_a"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "southwest",
+            "role": "forage",
+            "workers": 15,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 10,
+            "target_y": 15
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "fareast_south",
+            "role": "forage",
+            "workers": 15,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 20,
+            "target_y": 14
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "fareast",
+            "role": "forage",
+            "workers": 15,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 20,
+            "target_y": 12
+          }
+        },
+        {
+          "band_order": {
+            "band": "fareast",
+            "kind": "food",
+            "action": "release"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "fareast",
+            "role": "hunt",
+            "workers": 5,
+            "take_species": [],
+            "move_with_herd": false,
+            "fauna_id": "fowl_b"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "farwest",
+            "role": "hunt",
+            "workers": 5,
+            "take_species": [],
+            "move_with_herd": false,
+            "fauna_id": "boar_b"
+          }
+        },
+        {
+          "assign_labor": {
+            "band": "farsouthwest",
+            "role": "forage",
+            "workers": 15,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 6,
+            "target_y": 14
+          }
+        }
       ],
       "roads": [],
       "pens": [],
@@ -65,16 +517,85 @@
     }
   ],
   "tiles": [
-    { "at": [13, 11], "belief": 40.0 }
+    {
+      "at": [
+        13,
+        11
+      ],
+      "belief": 40.0
+    }
   ],
   "herds": [
-    { "id": "boar_a", "species": "boar", "at": [11, 10], "stock": 1.0, "origin": "worldgen" },
-    { "id": "fowl_a", "species": "fowl", "at": [16, 11], "stock": 1.0, "origin": "worldgen" },
-    { "id": "sheep_a", "species": "wild_sheep", "at": [11, 11], "stock": 1.0, "origin": "worldgen" },
-    { "id": "sheep_b", "species": "wild_sheep", "at": [13, 15], "stock": 1.0, "origin": "worldgen" },
-    { "id": "rabbit_a", "species": "rabbit", "at": [15, 15], "stock": 1.0, "origin": "worldgen" },
-    { "id": "fowl_b", "species": "fowl", "at": [19, 11], "stock": 1.0, "origin": "worldgen" },
-    { "id": "boar_b", "species": "boar", "at": [8, 13], "stock": 1.0, "origin": "worldgen" }
+    {
+      "id": "boar_a",
+      "species": "boar",
+      "at": [
+        11,
+        10
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "fowl_a",
+      "species": "fowl",
+      "at": [
+        16,
+        11
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "sheep_a",
+      "species": "wild_sheep",
+      "at": [
+        11,
+        11
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "sheep_b",
+      "species": "wild_sheep",
+      "at": [
+        13,
+        15
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "rabbit_a",
+      "species": "rabbit",
+      "at": [
+        15,
+        15
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "fowl_b",
+      "species": "fowl",
+      "at": [
+        19,
+        11
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "boar_b",
+      "species": "boar",
+      "at": [
+        8,
+        13
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    }
   ],
   "deposits": []
 }
