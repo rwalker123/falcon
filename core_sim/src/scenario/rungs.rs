@@ -99,6 +99,12 @@ pub struct BuildRungEntry {
     pub material: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// The work already done on the rung this build raises, in **work units** of that rung (the unit
+    /// its `build.work_cost` is quoted in), applied right after the build is declared. A tile build
+    /// only (a store), where the improvement's one position is the rung's base plus this. Absent
+    /// starts the build at nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<f32>,
 }
 
 /// **The source kinds a scenario can hold a rung on.**
@@ -319,11 +325,38 @@ fn check_build(
         }
     }
     let verb = build.verb.trim().to_ascii_lowercase();
-    if ctx.ladder.rung_for_verb(VerbId::new(&verb)).is_none() {
+    let rung = ctx.ladder.rung_for_verb(VerbId::new(&verb));
+    if rung.is_none() {
         refusals.push(ScenarioRefusal::new(
             format!("{at}.build_rung.verb"),
             format!("'{}' is not a build verb on the ladder", build.verb),
         ));
+    }
+    if let Some(progress) = build.progress {
+        let path = format!("{at}.build_rung.progress");
+        if !progress.is_finite() || progress < 0.0 {
+            refusals.push(ScenarioRefusal::new(
+                path,
+                "progress is work already done: a finite amount, zero or more",
+            ));
+        } else if let Some(rung) = rung {
+            if ctx.ladder.source_kind(rung.branch) != Some(SourceKind::Tile) {
+                refusals.push(ScenarioRefusal::new(
+                    path,
+                    "progress is for a tile build (a store) only",
+                ));
+            } else if let Some(cost) = crate::tile_improvement::tile_rung_cost(rung) {
+                if progress >= cost {
+                    refusals.push(ScenarioRefusal::new(
+                        path,
+                        format!(
+                            "{progress} is the whole {cost} work of the {} rung: a finished rung is a `held` rung, so hold it instead",
+                            rung.label.to_lowercase()
+                        ),
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -783,6 +816,7 @@ pub(super) fn export_builds_and_pens(
                         herd_id: None,
                         material: None,
                         branch: None,
+                        progress: None,
                     };
                     match &declaration.source {
                         BuildSource::Patch(tile) | BuildSource::Tile { tile, .. } => {
@@ -927,5 +961,34 @@ pub(super) fn apply_builds(
             refusals.push(ScenarioRefusal::new(at, refusal.to_string()));
             return;
         }
+        if let Some(progress) = build.progress {
+            if let Err(reason) = bank_progress(world, build, progress) {
+                refusals.push(ScenarioRefusal::new(
+                    format!("{at}.build_rung.progress"),
+                    reason,
+                ));
+                return;
+            }
+        }
     }
+}
+
+/// **Seat a tile build's work already done**: the improvement's one position is the raising rung's
+/// base plus `progress` work units, written through its own mutator, the position the game's build
+/// accrual advances.
+fn bank_progress(world: &mut World, build: &BuildRungEntry, progress: f32) -> Result<(), String> {
+    let ladder = world.resource::<LadderConfigHandle>().get();
+    let rung = ladder
+        .rung_for_verb(VerbId::new(&build.verb.trim().to_ascii_lowercase()))
+        .ok_or("the verb names no rung")?;
+    let (Some(x), Some(y)) = (build.target_x, build.target_y) else {
+        return Err("progress needs the build's tile".to_string());
+    };
+    let (base, _) = tile_rung_span(rung.rung_id(), &ladder);
+    let mut registry = world.resource_mut::<TileImprovementRegistry>();
+    let improvement = registry
+        .get_mut(UVec2::new(x, y), rung.branch)
+        .ok_or("there is no improvement on that tile to carry the work")?;
+    improvement.set_position(base + progress, &ladder);
+    Ok(())
 }

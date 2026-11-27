@@ -144,8 +144,9 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   first refused entry stops the load. A replayed entry writes the same success line to the feed a
   player's command would.
 - `finish_scenario` then replays the `build_rung` entries through `command_seam::apply_build_rung`,
-  after labor (plan §2.8), so a build finds the band labor put on its source. A refused build stops
-  the load at that entry.
+  after labor (plan §2.8), so a build finds the band labor put on its source; a tile build's optional
+  `progress` (work already done, `intensification.md` → "Scenario section") is banked right after its
+  declaration. A refused build stops the load at that entry.
 - `finish_scenario` then replays every faction's `pens` entries through
   `command_seam::apply_extend_pen` / `apply_set_herd_output`, after the builds (plan §2.8). A herd is
   named by its scenario id in every section, mapped through `ScenarioApplied.herds`. A refused entry

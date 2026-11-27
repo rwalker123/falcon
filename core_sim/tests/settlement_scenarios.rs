@@ -19,11 +19,10 @@ const CITY: &str = include_str!("../scenarios/settlement_city_playtest.json");
 const TOWN_BELIEF: f32 = 12.0;
 /// The most turns the town crossing may take after load.
 const TOWN_CROSSING_CAP: u32 = 6;
-/// The most turns the city crossing may take after load. A granary is 120 work and one tile holds at
-/// most 12 hands (`tile_worker_cap`), keepers included, so it cannot finish much sooner than this.
-const CITY_CROSSING_CAP: u32 = 15;
+/// The most turns the city crossing may take after load (the granary opens part built).
+const CITY_CROSSING_CAP: u32 = 6;
 /// The fewest turns a city must hold after it is reached (carry and appetite bound it).
-const CITY_HOLDS_AT_LEAST: u32 = 20;
+const CITY_HOLDS_AT_LEAST: u32 = 30;
 /// The beat the city stage fires, as the feed's gloss names it.
 const CITY_BEAT_GLOSS: &str = "settlement.city_reached=";
 
@@ -232,4 +231,24 @@ fn a_loaded_tribe_survives_the_turns_and_a_member_is_a_band() {
         run_turn(&mut app);
     }
     assert_eq!(members(&app), 6, "no member left the tribe");
+}
+
+fn city_with_progress(progress: Value) -> Vec<String> {
+    let mut file: Value = serde_json::from_str(CITY).unwrap();
+    file["factions"][0]["rungs"][1]["build_rung"]["progress"] = progress;
+    refusal_paths(&file.to_string())
+}
+
+#[test]
+fn a_builds_progress_is_refused_where_it_means_nothing() {
+    let path = "factions[0].rungs[1].build_rung.progress".to_string();
+    // Negative, and the whole rung's work (a finished rung is a held one).
+    assert!(city_with_progress(json!(-1.0)).contains(&path));
+    assert!(city_with_progress(json!(120.0)).contains(&path));
+    assert!(city_with_progress(json!(119.0)).is_empty());
+    // A verb that raises a patch is not a tile build.
+    let mut file: Value = serde_json::from_str(CITY).unwrap();
+    file["factions"][0]["rungs"][1]["build_rung"]["verb"] = json!("cultivate");
+    file["factions"][0]["rungs"][1]["build_rung"]["progress"] = json!(5.0);
+    assert!(refusal_paths(&file.to_string()).contains(&path));
 }

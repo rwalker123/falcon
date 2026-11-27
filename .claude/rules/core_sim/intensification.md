@@ -2758,4 +2758,6 @@ band already holds. `herd_id` is a scenario herd id, mapped to the runtime id at
 pass 1 when `band` names no band in the file, `verb` is not a ladder verb, or `herd_id` is not an id
 the file's `herds` section declares.
 
+`progress` is optional: the work already done on the rung the build raises, **in work units of that rung** (the unit its `build.work_cost` is quoted in; the improvement's one position is the rung's base plus it), applied right after the build is declared (`rungs::bank_progress`, through `TileImprovement::set_position`). **A tile build (a store) only.** Refused when it is not finite and zero or more, when the verb is not a tile build, and at or above the rung's whole work (a finished rung is a `held` rung, so hold it instead). The held-rung climb applies first, so a granary build opens on a held pit. Export does not write progress (build progress toward the next rung is not exported).
+
 **Export** writes `held` rungs for the patches and herds the faction owns above their branch's root (a patch with its committed crop) and the workings it has an `extract` row on, and a `build_rung` for each declared climb (deduplicated across the bands it is queued on; a road or band improvement names the declaring band, and one whose band has no scenario id is noted). Build progress toward the next rung is not written.

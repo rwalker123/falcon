@@ -17,7 +17,7 @@
         { "held": { "rung": "food_stores:storage_pit", "at": [13, 10] } },
         { "build_rung": {
           "band": null, "verb": "store", "target_x": 13, "target_y": 10,
-          "herd_id": null, "material": null, "branch": null } }
+          "herd_id": null, "material": null, "branch": null, "progress": 90.0 } }
       ],
       "bands": [
         { "id": "home", "at": [13, 11], "size": 150, "ages": { "children": 0.10, "working": 0.80, "elders": 0.10 }, "founding_lines": 8, "larder": [{ "class": "dry", "amount": 840.0 }], "leader": true },
