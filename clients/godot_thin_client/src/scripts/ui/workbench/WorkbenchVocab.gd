@@ -283,6 +283,8 @@ const SCENARIO_NO_FILE := "No file open. Choose one above, or create a new one."
 const SCENARIO_UNREADABLE := "%s could not be read: %s"
 const SCENARIO_BAD_NAME := "A file name is letters, digits, - and _ only."
 const SCENARIO_NAME_EXISTS := "%s already exists."
+## Said after `SCENARIO_NAME_EXISTS` when an opened export would save over a fixture of the same name.
+const SCENARIO_RENAME_HINT := "Type another name above — Save stays off until it is free."
 const SCENARIO_PICK_ARMED := "Click a hex on the map to fill the tile… (Esc cancels)"
 const SCENARIO_CLEAN_STATUS := "%s — nothing unsaved."
 const SCENARIO_DIRTY_STATUS := "%s — unsaved edits."

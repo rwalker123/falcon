@@ -38,6 +38,7 @@ invisible yet still holding its reservation. It goes away with the Inspector.
 | `ui/workbench/pages/ScenarioPage.gd` | Page four — edit a scenario JSON file, Save it through the server's `write_scenario`, Load it with `load_scenario`. State is the file (path, parsed document, the canonical saved text); `reset()` is a no-op |
 | `ui/workbench/pages/scenario/ScenarioForm.gd` | The schema-walked form: draws a document from the scenario JSON Schema, blind (no scenario key named), edits it in place, holds the collapse state across rebuilds, attaches refusals to nodes |
 | `ui/workbench/pages/scenario/ScenarioSchema.gd` | All-`static` reading of the schema's SHAPES — map, variant oneOf, const oneOf, tile pick — plus the skeleton a `+ add` inserts and the integer normalisation of a parsed document |
+| `ui/workbench/pages/scenario/ScenarioBigInt.gd` | All-`static` lossless carrying of integers past 2^53 (a `u64` seed): scanned out of the text before parsing into marker strings, written back as bare digits, edited as a validated digits-only field |
 | `ui/workbench/pages/scenario/ScenarioRefusals.gd` | All-`static` parse of the server's `"<path>: <reason>"` lines and the path-prefix test |
 | `WorkbenchScenarioHost.gd` | `Main`'s end of the `scenario_request` and `pick_tile` services: the request table over the query drain and the one-shot map-pick latch |
 | `tools/workbench_scenario_chapter.gd` | The Scenario page's chapter of `workbench_preview` (fixtures in `tools/fixtures/scenario_schema.json` — the server's own `scenario_schema()` output — and `scenario_doc.json`, a checked-in scenario) |
@@ -421,6 +422,14 @@ probe that stringified a parsed file was refused with `invalid type: floating po
 `JSON.stringify(doc, "  ", false, true)` plus one trailing newline — `sort_keys` OFF, so the file's own
 key order survives. A freshly read file is therefore clean (a chapter assertion pins it).
 
+**An integer past 2^53 must not pass through a double.** `JSON.parse_string` would turn a full-range `u64` seed
+(`14083920937384765431`, the shape of a random-seeded export) into `9223372036854775807`, so open -> Save would change
+the world. `ScenarioBigInt.protect` scans the TEXT before parsing (skipping strings) and replaces each integer literal
+whose magnitude exceeds 2^53-1 with a marker string carrying its digits; the document holds that string and
+`restore` turns `"<marker>digits"` back into bare digits on serialization, so the literal survives byte-exact. The
+form draws a marker as a digits-only text field validated on each keystroke against the node's `minimum`/`maximum` and
+`u64`/`i64` (an invalid entry is tinted and not written); ordinary integers never touch any of this.
+
 **The form is walked blind** (`ScenarioForm` + `ScenarioSchema`). Nothing names a scenario key; each
 schema node is drawn by its SHAPE, keyed by the file's own spelling. Properties draw required keys first
 (in `required`'s order — the loader struct's field order; the schema's `properties` are alphabetical),
@@ -451,7 +460,9 @@ of a declared id rebuilds the form when the field loses focus, not per keystroke
 **Picks.** The pick is delivered **in addition to** the click's normal selection (`Main` connects `hex_selected`
 and `WorkbenchScenarioHost.offer_hex` consumes it; the tile card opens beside the form). A second press of
 `pick`, or Escape (`Main._unhandled_input` asks `cancel_pick` before any other Escape claimant), cancels, and
-the page's status line reads `Click a hex on the map…` only while armed.
+the page's status line reads `Click a hex on the map…` only while armed. **An armed pick also ends when the page leaves the
+screen** — the page listens to its own `visibility_changed` (the Workbench hiding) and `tree_exiting` (a page switch
+detaches it) and cancels through the service's second-arm-cancels rule, so no shell hook is involved.
 
 **Collapse state survives a rebuild** (`_open`, keyed by path) and is cleared when a different file is opened.
 
@@ -462,7 +473,8 @@ expanded so it is visible. They stay until the next Save/Load reply, through edi
 
 **Load is live only when the page is clean and the file has been saved** — Load swaps the world for the file
 on DISK, so the file on screen must be it. A new file (`New`, built from the schema's skeleton) is unsaved until
-Save. Switching file or `New` while dirty takes a second press (the discard prompt), no modal.
+Save. Switching file or `New` while dirty takes a second press (the discard prompt), no modal. **`New`, the file list and the
+discard prompt are disabled while a read, Save or Load is pending**, so a late reply cannot land on another document.
 
 **Text fields release focus like number fields** (`WorkbenchPage.focused_text_field`), so a typed-in field
 never swallows the hotkeys.
@@ -487,4 +499,7 @@ no services.
 after the fixtures); the dropdown labels them `export · name.json` and keeps the real path as item metadata. Opening
 one reads it, but the page's path becomes `core_sim/scenarios/<same basename>` (`WorkbenchVocab.SCENARIO_DIR_PREFIX`,
 matching the server's fixture dir) and the document is dirty, since nothing is saved there — so Load stays
-disabled until Save, and the footer says where it was opened from and where it saves.
+disabled until Save, and the footer says where it was opened from and where it saves. **An export whose basename already
+exists as a fixture is never written over it**: the name field (prefilled with the basename) retargets the path as
+the designer types, and Save stays off — with `<path> already exists` in the footer — until the target is free and a
+valid file name.

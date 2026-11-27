@@ -179,7 +179,10 @@ func _add_value(host: Control, node: Dictionary, container: Variant, slot: Varia
 		ScenarioSchema.TYPE_STRING:
 			host.add_child(_string_row(label, node, container, slot, path, remove))
 		ScenarioSchema.TYPE_INTEGER, ScenarioSchema.TYPE_NUMBER:
-			host.add_child(_number_row(label, node, container, slot, path, remove))
+			if ScenarioBigInt.is_big(value):
+				host.add_child(_big_int_row(label, node, container, slot, path, remove))
+			else:
+				host.add_child(_number_row(label, node, container, slot, path, remove))
 		ScenarioSchema.TYPE_BOOLEAN:
 			host.add_child(_bool_row(label, node, container, slot, path, remove))
 		_:
@@ -339,6 +342,24 @@ func _string_row(label: String, node: Dictionary, container: Variant, slot: Vari
 	edit.focus_exited.connect(func() -> void:
 		if _declared_signature() != _signature:
 			_structure())
+	return _row(label, node, path, [edit], remove)
+
+
+## An integer beyond 2^53, which a SpinBox (a double) cannot hold: its digits in a text field, validated
+## against the node's bounds and `u64`/`i64` on every keystroke. An invalid entry is tinted and NOT written.
+func _big_int_row(label: String, node: Dictionary, container: Variant, slot: Variant, path: String,
+		remove: Callable) -> Control:
+	var edit := LineEdit.new()
+	edit.text = ScenarioBigInt.digits(String(container[slot]))
+	edit.custom_minimum_size.x = WorkbenchVocab.FORM_VALUE_MIN_WIDTH
+	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_style_line_edit(edit)
+	edit.text_changed.connect(func(text: String) -> void:
+		var parsed: Variant = ScenarioBigInt.parse_edit(text, node)
+		edit.add_theme_color_override("font_color", HudStyle.INK if parsed != null else HudStyle.DANGER)
+		if parsed != null:
+			container[slot] = parsed
+			_edited())
 	return _row(label, node, path, [edit], remove)
 
 

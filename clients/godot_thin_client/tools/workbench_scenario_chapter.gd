@@ -51,6 +51,8 @@ var _page: ScenarioPage = null
 var _schema: Dictionary = {}
 var _requests: Array = []
 var _picks: Array = []
+## The real pick latch `Main` uses, so toggle-to-cancel and one-shot behave as shipped.
+var _host := WorkbenchScenarioHost.new()
 var _next_save_ok := true
 var _asserts := 0
 
@@ -103,6 +105,10 @@ func run(h: Node) -> void:
 
 	_assert_switch_while_dirty()
 
+	await _assert_big_ints()
+	await _assert_export_collision()
+	_assert_busy_gates()
+	await _assert_pick_cancels()
 	await _assert_export_opens_as_a_fixture_target()
 	await h._settle()
 	await h._save("workbench_scenario_export")
@@ -169,7 +175,7 @@ func _install_fake_services() -> void:
 		return true
 	var pick := func(on_pick: Callable, on_cancel: Callable = Callable()) -> bool:
 		_picks.append({"pick": on_pick, "cancel": on_cancel})
-		return true
+		return _host.arm_pick(on_pick, on_cancel)
 	_h._shell.set_services({
 		WorkbenchVocab.SERVICE_SCENARIO_REQUEST: request,
 		WorkbenchVocab.SERVICE_PICK_TILE: pick,
@@ -405,7 +411,7 @@ func _assert_edits() -> void:
 		tile_pick.pressed.emit()
 		_assert(_picks.size() == 1, "pressing pick arms the pick_tile service")
 		_assert(_page._status.text == WorkbenchVocab.SCENARIO_PICK_ARMED, "an armed pick says what to click")
-		(_picks[0]["pick"] as Callable).call(PICKED_TILE[0], PICKED_TILE[1])
+		_host.offer_hex(PICKED_TILE[0], PICKED_TILE[1])
 		await _h._settle()
 		_assert(_doc()["factions"][0]["bands"][0]["at"] == PICKED_TILE, "a picked hex writes [x, y]")
 		_assert(_page._status.text != WorkbenchVocab.SCENARIO_PICK_ARMED, "the armed line clears when the pick lands")
@@ -419,7 +425,7 @@ func _assert_edits() -> void:
 	_assert(key_pick != null, "an x-pick-tile block carries a pick button on its header")
 	if key_pick != null:
 		key_pick.pressed.emit()
-		(_picks[0]["pick"] as Callable).call(PICKED_LABOR_TILE[0], PICKED_LABOR_TILE[1])
+		_host.offer_hex(PICKED_LABOR_TILE[0], PICKED_LABOR_TILE[1])
 		await _h._settle()
 		var inner: Dictionary = _doc()["factions"][0]["labor"][0]
 		inner = inner[inner.keys()[0]]
@@ -428,7 +434,7 @@ func _assert_edits() -> void:
 	# A second press of pick cancels (the service answers through on_cancel).
 	_picks.clear()
 	_page._arm_pick(func(_x: int, _y: int) -> void: pass)
-	(_picks[0]["cancel"] as Callable).call()
+	_host.cancel_pick()
 	_assert(not _page._pick_armed, "a cancelled pick disarms the page")
 
 	_assert(_page._is_dirty(), "after edits the page is dirty")
@@ -571,3 +577,121 @@ func _assert_export_opens_as_a_fixture_target() -> void:
 	var writes := _requests.filter(func(r: Dictionary) -> bool: return r["kind"] == WorkbenchVocab.SCENARIO_KIND_WRITE)
 	_assert(writes.size() == 1 and writes[0]["args"]["path"] == EXPORT_FIXTURE_PATH, "Save sends write_scenario with the fixture path")
 	_assert(not _page._is_dirty() and not _page._load_button.disabled, "after Save the file is clean and Load is live")
+
+
+# ---- integers past 2^53 survive read -> edit -> write ---------------------------
+
+const BIG_SEED := "14083920937384765431"
+const BIG_SEED_ODD := "9007199254740993"
+const BIG_SEED_MAX := "18446744073709551615"
+const BIG_SEED_TOO_BIG := "18446744073709551616"
+
+
+func _write_payload() -> String:
+	_requests.clear()
+	_page._on_save_pressed()
+	for r in _requests:
+		if r["kind"] == WorkbenchVocab.SCENARIO_KIND_WRITE:
+			return String(r["args"]["text"])
+	return ""
+
+
+func _seed_edit() -> LineEdit:
+	for label in _labels("seed"):
+		for node in label.get_parent().find_children("*", "LineEdit", true, false):
+			return node
+	return null
+
+
+func _assert_big_ints() -> void:
+	# `JSON.stringify` writes the fixture's whole-number seed as `41733.0`; the literal under test is an integer.
+	var text := _doc_text().replace("\"seed\": 41733.0", "\"seed\": " + BIG_SEED)
+	_assert(not text.contains(BIG_SEED + "."), "the fixture's big seed is an integer literal")
+	_assert(text.contains(BIG_SEED), "the fixture carries the full-range seed")
+	_assert(_page.adopt_text(FILE_PATH, text), "a document with a u64 seed parses")
+	_assert(not _page._is_dirty(), "a big-int document is clean straight after reading")
+	var payload := _write_payload()
+	_assert(payload.contains("\"seed\": " + BIG_SEED + ","), "Save writes the u64 seed byte-exact, bare digits (got %s)" % payload.substr(payload.find("\"seed\""), 40))
+	_assert(not payload.contains("bigint"), "no marker leaks into the written file")
+	var edit := _seed_edit()
+	_assert(edit != null and edit.text == BIG_SEED, "a big integer shows as its digits in a text field")
+	if edit != null:
+		edit.text = BIG_SEED_ODD
+		edit.text_changed.emit(BIG_SEED_ODD)
+		_assert(_write_payload().contains("\"seed\": " + BIG_SEED_ODD + ","), "an edit to another big value round-trips exactly")
+		edit.text = BIG_SEED_MAX
+		edit.text_changed.emit(BIG_SEED_MAX)
+		_assert(_write_payload().contains("\"seed\": " + BIG_SEED_MAX + ","), "the u64 maximum round-trips")
+		edit.text = BIG_SEED_TOO_BIG
+		edit.text_changed.emit(BIG_SEED_TOO_BIG)
+		_assert(_write_payload().contains("\"seed\": " + BIG_SEED_MAX + ","), "a value past u64 is not written")
+	# Ordinary integers keep the ordinary path.
+	_page.adopt_text(FILE_PATH, _doc_text())
+	_assert(_write_payload().contains("\"seed\": 41733,"), "an ordinary seed is written as it was")
+	await _h._settle()
+
+
+# ---- an export must not overwrite a fixture --------------------------------------
+
+const EXPORT_COLLIDING := "scenarios/herds_pens_playtest.json"
+
+
+func _assert_export_collision() -> void:
+	_page.adopt_schema(_schema, [FILE_PATH, OTHER_FILE_PATH, EXPORT_COLLIDING])
+	_assert(_page.adopt_text(EXPORT_COLLIDING, _doc_text()), "a colliding export parses")
+	_assert(_page.current_path() == FILE_PATH, "the colliding export retargets the existing fixture path")
+	_assert(_page._save_button.disabled, "Save is off while the target fixture already exists")
+	_assert(_page._status.text.contains(WorkbenchVocab.SCENARIO_NAME_EXISTS % FILE_PATH), "the footer says the name exists")
+	_requests.clear()
+	_page._on_save_pressed()
+	_assert(_requests.is_empty(), "Save sends nothing to a taken name")
+	_page._name_edit.text = "bad name"
+	_page._name_edit.text_changed.emit("bad name")
+	_assert(_page._save_button.disabled, "an invalid name keeps Save off")
+	_page._name_edit.text = "my_copy"
+	_page._name_edit.text_changed.emit("my_copy")
+	_assert(_page.current_path() == WorkbenchVocab.SCENARIO_DIR_PREFIX + "my_copy.json", "typing a name retargets the path")
+	_assert(not _page._save_button.disabled, "a free name turns Save on")
+	_requests.clear()
+	_page._on_save_pressed()
+	var writes := _requests.filter(func(r: Dictionary) -> bool: return r["kind"] == WorkbenchVocab.SCENARIO_KIND_WRITE)
+	_assert(writes.size() == 1 and writes[0]["args"]["path"] == WorkbenchVocab.SCENARIO_DIR_PREFIX + "my_copy.json",
+		"Save sends the new name's path")
+	await _h._settle()
+
+
+# ---- nothing switches documents under a pending request --------------------------
+
+func _assert_busy_gates() -> void:
+	_page.adopt_text(FILE_PATH, _doc_text())
+	_page._busy = true
+	_page._refresh_state()
+	_assert(_page._new_button.disabled and _page._file_picker.disabled, "New and the file list are disabled while a request is pending")
+	_requests.clear()
+	_page._on_new_pressed()
+	_page._on_file_chosen(2)
+	_assert(_page.current_path() == FILE_PATH and _requests.is_empty(), "New and a file choice do nothing while a request is pending")
+	_page._busy = false
+	_page._refresh_state()
+	_assert(not _page._new_button.disabled, "New is live again once the request is answered")
+
+
+# ---- an armed pick does not outlive the page being on screen -----------------------
+
+func _assert_pick_cancels() -> void:
+	_page.adopt_text(FILE_PATH, _doc_text())
+	_page._arm_pick(func(_x: int, _y: int) -> void: pass)
+	_assert(_page._pick_armed and _host.is_pick_armed(), "a pick is armed")
+	_h._shell.set_panel_visible(false)
+	await _h._settle()
+	_assert(not _page._pick_armed and not _host.is_pick_armed(), "hiding the Workbench cancels an armed pick")
+	_h._shell.set_panel_visible(true)
+	_h._shell.show_page(PAGE_ID)
+	await _h._settle()
+	_page._arm_pick(func(_x: int, _y: int) -> void: pass)
+	_assert(_host.is_pick_armed(), "a pick is armed again")
+	_h._shell.show_page(&"kits")
+	await _h._settle()
+	_assert(not _page._pick_armed and not _host.is_pick_armed(), "switching away from the page cancels an armed pick")
+	_h._shell.show_page(PAGE_ID)
+	await _h._settle()

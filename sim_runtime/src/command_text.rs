@@ -42,13 +42,13 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
     CommandVerbHelp {
         verb: "list_scenarios",
         aliases: &[],
-        summary: "DEV: list the scenario files (core_sim/scenarios/*.json) and the scenario file's JSON Schema.",
+        summary: "DEV: list the scenario files (core_sim/scenarios/*.json, then the export directory's) and the scenario file's JSON Schema.",
         usage: "list_scenarios",
     },
     CommandVerbHelp {
         verb: "read_scenario",
         aliases: &[],
-        summary: "DEV: read one scenario file from core_sim/scenarios. (write_scenario has no text form: it carries a whole file.)",
+        summary: "DEV: read one scenario file from core_sim/scenarios or the export directory. (write_scenario has no text form: it carries a whole file.)",
         usage: "read_scenario <path>",
     },
     CommandVerbHelp {

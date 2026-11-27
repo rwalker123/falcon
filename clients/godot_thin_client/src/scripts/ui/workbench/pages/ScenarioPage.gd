@@ -35,6 +35,8 @@ var _saved_canon := ""
 var _is_new := false
 ## The export path the open document was read from, when it was not a fixture; `""` otherwise.
 var _opened_from := ""
+## False while the name field holds something that is not a valid file name (an export being renamed).
+var _name_ok := true
 var _schema: Dictionary = {}
 var _files: Array = []
 var _list_pending := false
@@ -81,6 +83,10 @@ func build() -> void:
 	add_child(_form_host)
 	_configure_form()
 	tree_entered.connect(_on_tree_entered)
+	# A pick armed on the map must not outlive the page being on screen: hiding the surface or switching
+	# pages away detaches/hides this node, and either one cancels it — with no hook in the shell.
+	visibility_changed.connect(_on_visibility_changed)
+	tree_exiting.connect(_cancel_armed_pick)
 	_render()
 	_request_list()
 
@@ -115,6 +121,7 @@ func _build_file_rows() -> Control:
 	_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	HudStyle.apply_line_edit(_name_edit)
 	_name_edit.add_theme_font_size_override("font_size", WorkbenchVocab.FONT_SIZE_VALUE)
+	_name_edit.text_changed.connect(_on_name_changed)
 	new_row.add_child(_name_edit)
 	_new_button = _button(WorkbenchVocab.SCENARIO_NEW_LABEL, "ghost")
 	_new_button.pressed.connect(_on_new_pressed)
@@ -216,6 +223,9 @@ func _fill_file_picker() -> void:
 
 func _on_file_chosen(index: int) -> void:
 	release_field_focus()
+	if _busy:
+		_fill_file_picker()
+		return
 	if index <= 0:
 		_fill_file_picker()
 		return
@@ -233,6 +243,8 @@ func _on_file_chosen(index: int) -> void:
 
 
 func _on_confirm_pressed() -> void:
+	if _busy:
+		return
 	var path := _pending_open
 	_pending_open = ""
 	if not path.is_empty():
@@ -263,7 +275,8 @@ func _on_read_reply(reply: Dictionary, path: String) -> void:
 ## previous document and says so in the banner. Public so a harness can seat a document without a server.
 func adopt_text(path: String, text: String) -> bool:
 	var json := JSON.new()
-	if json.parse(text) != OK or not (json.data is Dictionary):
+	# Integers past 2^53 are carried as marker strings (see ScenarioBigInt), or they would be rounded.
+	if json.parse(ScenarioBigInt.protect(text)) != OK or not (json.data is Dictionary):
 		var why := "line %d: %s" % [json.get_error_line(), json.get_error_message()] \
 			if json.get_error_message() != "" else "not a JSON object"
 		_banner_lines = [WorkbenchVocab.SCENARIO_UNREADABLE % [path, why]]
@@ -281,6 +294,10 @@ func adopt_text(path: String, text: String) -> bool:
 	_doc = doc
 	_is_new = not _opened_from.is_empty()
 	_saved_canon = "" if _is_new else _stringify(doc)
+	_name_ok = true
+	if _is_new and _name_edit != null:
+		# An export is retargeted by typing a name; the field starts on the basename it would save as.
+		_name_edit.text = _path.get_file().trim_suffix(WorkbenchVocab.SCENARIO_FILE_SUFFIX)
 	_refusals = []
 	_banner_lines = []
 	_pending_open = ""
@@ -296,6 +313,8 @@ func adopt_text(path: String, text: String) -> bool:
 
 func _on_new_pressed() -> void:
 	release_field_focus()
+	if _busy:
+		return
 	if _is_dirty() and not _pending_new:
 		_pending_new = true
 		_pending_open = ""
@@ -304,13 +323,7 @@ func _on_new_pressed() -> void:
 	_pending_new = false
 	_pending_open = ""
 	var file_name := _name_edit.text.strip_edges()
-	var valid := not file_name.is_empty()
-	for i in file_name.length():
-		var code := file_name.unicode_at(i)
-		var ok := (code >= 48 and code <= 57) or (code >= 65 and code <= 90) \
-			or (code >= 97 and code <= 122) or code == 45 or code == 95
-		valid = valid and ok
-	if not valid:
+	if not _valid_file_name(file_name):
 		_banner_lines = [WorkbenchVocab.SCENARIO_BAD_NAME]
 		_banner_tint = HudStyle.WARN
 		_render_banner([])
@@ -330,6 +343,7 @@ func _on_new_pressed() -> void:
 		return
 	_path = path
 	_opened_from = ""
+	_name_ok = true
 	_doc = ScenarioSchema.skeleton(_schema)
 	_is_new = true
 	_saved_canon = ""
@@ -345,7 +359,7 @@ func _on_new_pressed() -> void:
 func _on_save_pressed() -> void:
 	release_field_focus()
 	var ask := service(WorkbenchVocab.SERVICE_SCENARIO_REQUEST)
-	if not ask.is_valid() or not (_doc is Dictionary) or _busy:
+	if not ask.is_valid() or not (_doc is Dictionary) or _busy or _target_blocked():
 		return
 	var text := _stringify(_doc)
 	_busy = true
@@ -426,8 +440,52 @@ func _show_failure(reply: Dictionary, path: String) -> void:
 ## The text Save writes and the dirty check compares: two-space indent, keys in document order, full
 ## float precision, and the trailing newline the checked-in files carry.
 static func _stringify(doc: Variant) -> String:
-	return JSON.stringify(doc, WorkbenchVocab.SCENARIO_INDENT, false, true) \
+	return ScenarioBigInt.restore(JSON.stringify(doc, WorkbenchVocab.SCENARIO_INDENT, false, true)) \
 		+ WorkbenchVocab.SCENARIO_TRAILING_NEWLINE
+
+
+## A file name is letters, digits, `-` and `_` — what the server accepts as `<name>.json`.
+static func _valid_file_name(file_name: String) -> bool:
+	if file_name.is_empty():
+		return false
+	for i in file_name.length():
+		var code := file_name.unicode_at(i)
+		var ok := (code >= 48 and code <= 57) or (code >= 65 and code <= 90) \
+			or (code >= 97 and code <= 122) or code == 45 or code == 95
+		if not ok:
+			return false
+	return true
+
+
+## An unsaved target that already exists on disk would be OVERWRITTEN by Save (an opened export whose
+## basename collides with a fixture); or one whose name is not a valid file name. Save waits for a free name.
+func _target_blocked() -> bool:
+	return _is_new and (_files.has(_path) or not _name_ok)
+
+
+func _on_name_changed(text: String) -> void:
+	if _opened_from.is_empty():
+		return
+	var trimmed := text.strip_edges()
+	_name_ok = _valid_file_name(trimmed)
+	if _name_ok:
+		_path = WorkbenchVocab.SCENARIO_DIR_PREFIX + trimmed + WorkbenchVocab.SCENARIO_FILE_SUFFIX
+	_refresh_state()
+
+
+func _on_visibility_changed() -> void:
+	if not is_visible_in_tree():
+		_cancel_armed_pick()
+
+
+## Drop an armed map pick. The pick service cancels when armed a second time, so that is how it is asked.
+func _cancel_armed_pick() -> void:
+	if not _pick_armed:
+		return
+	var arm := service(WorkbenchVocab.SERVICE_PICK_TILE)
+	if arm.is_valid():
+		arm.call(func(_x: int, _y: int) -> void: pass, Callable())
+	_pick_armed = false
 
 
 static func _is_fixture_path(path: String) -> bool:
@@ -528,17 +586,18 @@ func _refresh_state() -> void:
 	if _file_picker != null:
 		_file_picker.disabled = not have_ask or _busy
 		_refresh_button.disabled = not have_ask or _list_pending
-		_new_button.disabled = _schema.is_empty()
+		_new_button.disabled = _schema.is_empty() or _busy
 		_new_button.text = WorkbenchVocab.SCENARIO_DISCARD_LABEL if _pending_new \
 			else WorkbenchVocab.SCENARIO_NEW_LABEL
 		_confirm_button.visible = not _pending_open.is_empty()
 		_confirm_button.text = WorkbenchVocab.SCENARIO_DISCARD_LABEL
+		_confirm_button.disabled = _busy
 	var dirty := _is_dirty()
 	if _dot != null:
 		WorkbenchWidgets.set_modified(_dot, dirty)
 	if _save_button != null:
 		_save_button.disabled = not have_ask or not (_doc is Dictionary) or _busy \
-			or (not dirty and not _is_new)
+			or (not dirty and not _is_new) or _target_blocked()
 		_load_button.disabled = not _load_is_live()
 	if _status != null:
 		_status.text = _status_text(dirty)
@@ -552,6 +611,10 @@ func _status_text(dirty: bool) -> String:
 	if _path.is_empty():
 		return WorkbenchVocab.SCENARIO_NO_FILE
 	if not _opened_from.is_empty():
+		if not _name_ok:
+			return WorkbenchVocab.SCENARIO_BAD_NAME
+		if _files.has(_path):
+			return WorkbenchVocab.SCENARIO_NAME_EXISTS % _path + " " + WorkbenchVocab.SCENARIO_RENAME_HINT
 		return WorkbenchVocab.SCENARIO_EXPORT_STATUS % [_opened_from.get_file(), _path]
 	if _is_new:
 		return WorkbenchVocab.SCENARIO_NEW_STATUS % _path

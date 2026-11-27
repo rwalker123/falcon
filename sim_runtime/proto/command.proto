@@ -1151,8 +1151,10 @@ message ScenarioOpReply {
   repeated string refusals = 3;
   // An export only: one line per thing the live world holds that the file cannot say. Empty on a load.
   repeated string notes = 4;
-  // `list_scenarios` only (empty otherwise): the `*.json` files in the scenario directory, sorted, each
-  // spelled as a path `read_scenario` and `write_scenario` accept (`core_sim/scenarios/<name>.json`).
+  // `list_scenarios` only (empty otherwise): the `*.json` files `read_scenario` accepts — the fixture
+  // directory's (`core_sim/scenarios/<name>.json`), sorted, then the export directory's
+  // (`SIM_SCENARIO_DIR`, default `scenarios/<name>.json`), sorted. Only the fixture entries are
+  // paths `write_scenario` accepts.
   repeated string files = 5;
   // `read_scenario` only (empty otherwise): the file's contents, verbatim.
   string text = 6;
@@ -1168,8 +1170,8 @@ message ListScenariosCommand {
 }
 
 // DEV: read one scenario file. `path` must resolve (lexically) to a `*.json` directly inside the
-// scenario directory (`core_sim/scenarios`, relative to the server's working directory), else it is
-// refused at `<file>`. Answered with `ScenarioOpReply` (`path`, `text`).
+// fixture directory (`core_sim/scenarios`, relative to the server's working directory) or the export
+// directory (`SIM_SCENARIO_DIR`), else it is refused at `<file>`. Answered with `ScenarioOpReply` (`path`, `text`).
 message ReadScenarioCommand {
   uint64 request_id = 1;
   string path = 2;
@@ -1178,7 +1180,8 @@ message ReadScenarioCommand {
 // DEV: write one scenario file, only if it would load. The text is parsed against the live world's
 // configs and then built as a trial candidate world that is dropped (the live world is never touched).
 // Zero refusals: `text` is written byte for byte, atomically. Otherwise nothing is written and the
-// reply lists every refusal. Same path policy as `read_scenario`. Answered with `ScenarioOpReply`.
+// reply lists every refusal. The path must be a `*.json` directly inside the fixture directory
+// (`core_sim/scenarios`) ONLY — an export is saved as a reviewed fixture, never written in place. Answered with `ScenarioOpReply`.
 message WriteScenarioCommand {
   uint64 request_id = 1;
   string path = 2;

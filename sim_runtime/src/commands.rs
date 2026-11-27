@@ -747,13 +747,13 @@ pub enum CommandPayload {
     ListScenarios {
         request_id: u64,
     },
-    /// **DEV: read one scenario file** from the scenario directory. Proto field 103. Answered with a
+    /// **DEV: read one scenario file** from the fixture or the export directory. Proto field 104. Answered with a
     /// [`QueryReply::ScenarioOp`] (`path`, `text`); not replayable.
     ReadScenario {
         request_id: u64,
         path: String,
     },
-    /// **DEV: write one scenario file, only if it would load.** Proto field 105. The server parses
+    /// **DEV: write one scenario file, only if it would load** (fixture directory only). Proto field 105. The server parses
     /// `text` and builds a trial world from it, dropped; zero refusals writes it byte for byte, and
     /// otherwise nothing is written and the refusals are the answer. The live world is never touched.
     /// Answered with a [`QueryReply::ScenarioOp`]; not replayable.
