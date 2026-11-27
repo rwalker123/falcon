@@ -19,17 +19,19 @@ use crate::components::{BandBench, MIN_ORDER_COUNT, NOT_A_KIT_PART};
 use crate::orders::FactionId;
 
 /// One bench command. Field names match `sim_runtime::CommandPayload`'s; every field is required.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum BenchEntry {
     /// `bench_enqueue`: queue `count` of one recipe.
     BenchEnqueue {
+        #[schemars(extend("x-pick" = "band"))]
         band: String,
         recipe_id: String,
         count: u32,
     },
     /// `bench_enqueue_kit`: queue `kits` of a whole kit as one grouped order, one recipe per item.
     BenchEnqueueKit {
+        #[schemars(extend("x-pick" = "band"))]
         band: String,
         kit_id: String,
         kits: u32,

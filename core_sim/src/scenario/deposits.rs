@@ -19,10 +19,11 @@ use crate::intensification::LadderConfigHandle;
 use crate::resources::TileRegistry;
 
 /// One working's remaining stock.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DepositEntry {
     /// The tile the working stands on, `[x, y]`.
+    #[schemars(extend("x-pick" = "tile"))]
     pub at: [u32; 2],
     /// An `extraction.json` deposit id.
     pub material: String,

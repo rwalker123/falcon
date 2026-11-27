@@ -160,6 +160,9 @@ func _ready() -> void:
 	_assert_equipment_drops_the_world()
 	_assert_equipment_catches_up_on_page_switch()
 
+	# The Scenario page's whole chapter (its own file — one arc, one file).
+	await WorkbenchScenarioChapter.new().run(self)
+
 	# Back to the tuning page for the last assertion: `_tuning_page` finds the page in the TREE, and
 	# the shell detaches a page it is not showing.
 	_shell.show_page(TUNING_PAGE)

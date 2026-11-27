@@ -25,10 +25,11 @@ use crate::resources::TileRegistry;
 use crate::{terrain_definition, BiomeNiche};
 
 /// One tile the file overrides.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TileOverride {
     /// The tile, `[x, y]`.
+    #[schemars(extend("x-pick" = "tile"))]
     pub at: [u32; 2],
     /// A `TerrainType` name (`"AlluvialPlain"`). Absent keeps the generated biome.
     #[serde(skip_serializing_if = "Option::is_none")]

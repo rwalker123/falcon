@@ -742,6 +742,26 @@ pub enum CommandPayload {
         request_id: u64,
         path: String,
     },
+    /// **DEV: list the scenario files and the scenario file's JSON Schema.** Proto field 103.
+    /// Answered with a [`QueryReply::ScenarioOp`] (`files`, `schema`); not replayable.
+    ListScenarios {
+        request_id: u64,
+    },
+    /// **DEV: read one scenario file** from the fixture or the export directory. Proto field 104. Answered with a
+    /// [`QueryReply::ScenarioOp`] (`path`, `text`); not replayable.
+    ReadScenario {
+        request_id: u64,
+        path: String,
+    },
+    /// **DEV: write one scenario file, only if it would load** (fixture directory only). Proto field 105. The server parses
+    /// `text` and builds a trial world from it, dropped; zero refusals writes it byte for byte, and
+    /// otherwise nothing is written and the refusals are the answer. The live world is never touched.
+    /// Answered with a [`QueryReply::ScenarioOp`]; not replayable.
+    WriteScenario {
+        request_id: u64,
+        path: String,
+        text: String,
+    },
     /// **One band's outfitting loadout.** Proto field 69, and the **one** source of a faction's
     /// starting gear and material — a spawning band owns nothing.
     ///
@@ -1217,7 +1237,7 @@ pub enum QueryReply {
     /// The staffing dry run's crew and the rows it would cost.
     StaffingPreview(StaffingPreviewReply),
     /// The answer to a `load_scenario` - a command, riding here like [`Self::SaveOp`].
-    ScenarioOp(ScenarioOpReply),
+    ScenarioOp(Box<ScenarioOpReply>),
     /// Whether a world is running and its epoch.
     WorldStatus(WorldStatusReply),
 }
@@ -1316,7 +1336,7 @@ pub struct ConfigDriftEntry {
     pub live: ConfigDigestKind,
 }
 
-/// The answer to a `load_scenario`.
+/// The answer to a `load_scenario`, `list_scenarios`, `read_scenario` or `write_scenario`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ScenarioOpReply {
     pub ok: bool,
@@ -1327,6 +1347,13 @@ pub struct ScenarioOpReply {
     pub refusals: Vec<String>,
     /// An export only: what the live world holds that the file cannot say, one line each.
     pub notes: Vec<String>,
+    /// `list_scenarios` only: the scenario directory's `*.json` files, sorted, as paths the other
+    /// verbs accept. Empty otherwise.
+    pub files: Vec<String>,
+    /// `read_scenario` only: the file's contents, verbatim. Empty otherwise.
+    pub text: String,
+    /// `list_scenarios` only: the scenario file's JSON Schema, as a JSON string. Empty otherwise.
+    pub schema: String,
 }
 
 /// The answer to a world-status query.
@@ -2770,12 +2797,32 @@ impl CommandEnvelope {
                     path: path.clone(),
                 })
             }
+            CommandPayload::ListScenarios { request_id } => {
+                pb::command_envelope::Command::ListScenarios(pb::ListScenariosCommand {
+                    request_id: *request_id,
+                })
+            }
+            CommandPayload::ReadScenario { request_id, path } => {
+                pb::command_envelope::Command::ReadScenario(pb::ReadScenarioCommand {
+                    request_id: *request_id,
+                    path: path.clone(),
+                })
+            }
             CommandPayload::ExportScenario { request_id, path } => {
                 pb::command_envelope::Command::ExportScenario(pb::ExportScenarioCommand {
                     request_id: *request_id,
                     path: path.clone(),
                 })
             }
+            CommandPayload::WriteScenario {
+                request_id,
+                path,
+                text,
+            } => pb::command_envelope::Command::WriteScenario(pb::WriteScenarioCommand {
+                request_id: *request_id,
+                path: path.clone(),
+                text: text.clone(),
+            }),
             CommandPayload::DeleteSave { request_id, slot } => {
                 pb::command_envelope::Command::DeleteSave(pb::DeleteSaveCommand {
                     request_id: *request_id,
@@ -3100,6 +3147,18 @@ impl CommandEnvelope {
             pb::command_envelope::Command::LoadScenario(cmd) => CommandPayload::LoadScenario {
                 request_id: cmd.request_id,
                 path: cmd.path,
+            },
+            pb::command_envelope::Command::ListScenarios(cmd) => CommandPayload::ListScenarios {
+                request_id: cmd.request_id,
+            },
+            pb::command_envelope::Command::ReadScenario(cmd) => CommandPayload::ReadScenario {
+                request_id: cmd.request_id,
+                path: cmd.path,
+            },
+            pb::command_envelope::Command::WriteScenario(cmd) => CommandPayload::WriteScenario {
+                request_id: cmd.request_id,
+                path: cmd.path,
+                text: cmd.text,
             },
             pb::command_envelope::Command::ExportScenario(cmd) => CommandPayload::ExportScenario {
                 request_id: cmd.request_id,
@@ -3835,6 +3894,9 @@ impl QueryReplyEnvelope {
                     path: reply.path.clone(),
                     refusals: reply.refusals.clone(),
                     notes: reply.notes.clone(),
+                    files: reply.files.clone(),
+                    text: reply.text.clone(),
+                    schema: reply.schema.clone(),
                 })
             }
             QueryReply::WorldStatus(reply) => {
@@ -4011,12 +4073,15 @@ impl QueryReplyEnvelope {
                 QueryReply::SaveOp(save_op_reply_from_proto(reply))
             }
             pb::query_reply_envelope::Reply::ScenarioOp(reply) => {
-                QueryReply::ScenarioOp(ScenarioOpReply {
+                QueryReply::ScenarioOp(Box::new(ScenarioOpReply {
                     ok: reply.ok,
                     path: reply.path,
                     refusals: reply.refusals,
                     notes: reply.notes,
-                })
+                    files: reply.files,
+                    text: reply.text,
+                    schema: reply.schema,
+                }))
             }
             pb::query_reply_envelope::Reply::WorldStatus(reply) => {
                 QueryReply::WorldStatus(WorldStatusReply {
@@ -4964,8 +5029,18 @@ mod tests {
                 request_id: 14,
                 path: "/abs/scenario.json".to_string(),
             },
+            CommandPayload::ListScenarios { request_id: 15 },
+            CommandPayload::ReadScenario {
+                request_id: 16,
+                path: "core_sim/scenarios/a.json".to_string(),
+            },
+            CommandPayload::WriteScenario {
+                request_id: 17,
+                path: "core_sim/scenarios/a.json".to_string(),
+                text: "{\n  \"name\": \"a\"\n}\n".to_string(),
+            },
             CommandPayload::ExportScenario {
-                request_id: 15,
+                request_id: 18,
                 path: "out.json".to_string(),
             },
         ] {

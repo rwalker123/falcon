@@ -29,6 +29,9 @@ rand_chacha = "0.3"
 # sibling crate's features from silently making the checkpoint unencodable.
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
+# The scenario file's JSON Schema is generated from the loader's own structs, so the Workbench form
+# cannot drift from what `parse_scenario` accepts (`scenario::scenario_schema`).
+schemars = "1.2"
 # The save format's codec. JSON cannot express this checkpoint: `serde_json` admits only keys that
 # serialize to a string or an integer, and the sim-state maps are keyed by `UVec2`, by tuples and by
 # composite structs (`ConnectionKey`, `BandKey`). CBOR takes all three.

@@ -86,6 +86,9 @@ const QUERY_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// save channel gets its own, generous bound, and it is still a bound — a server that died mid-write
 /// must not wedge the worker for the session.
 const SAVE_REPLY_TIMEOUT: Duration = Duration::from_secs(60);
+/// A scenario write or load runs a whole world build (the trial build, or the real one), which is
+/// slower than a save header read, so it is given twice the save channel's patience.
+const SCENARIO_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The questions, spelled as the GDScript seam spells them. They are matched on rather than
 /// compared to literals at the call site so a typo cannot become a silently unsent query.
@@ -145,8 +148,17 @@ pub(crate) const QUERY_KIND_FACTION_CAPACITY: &str = "faction_capacity";
 /// the menu (a scenario loaded from a terminal) can be attached to. Faction-free, answered before
 /// the server's `world_active` gate. The answer carries `world_active` and `world_epoch`.
 pub(crate) const QUERY_KIND_WORLD_STATUS: &str = "world_status";
-/// The `ScenarioOpReply` answer kind. The client never sends `load_scenario`; the reply is decoded
-/// only so the reply match stays exhaustive.
+/// **The scenario editor's four asks and their one answer kind.** All four are commands that answer
+/// on `ScenarioOpReply` (the Workbench's Scenario page, `.claude/rules/client/workbench.md`):
+/// `list_scenarios` (files + schema), `read_scenario` (`path` -> `text`), `write_scenario`
+/// (`path` + `text`, written only if a trial build would load it) and `load_scenario` (`path`, swaps
+/// the live world). They ride this worker for the reason the save verbs do — the answer is written
+/// back on the connection that asked.
+pub(crate) const QUERY_KIND_LIST_SCENARIOS: &str = "list_scenarios";
+pub(crate) const QUERY_KIND_READ_SCENARIO: &str = "read_scenario";
+pub(crate) const QUERY_KIND_WRITE_SCENARIO: &str = "write_scenario";
+pub(crate) const QUERY_KIND_LOAD_SCENARIO: &str = "load_scenario";
+/// The `ScenarioOpReply` answer kind.
 pub(crate) const QUERY_KIND_SCENARIO_OP: &str = "scenario_op";
 /// **The seat claim's answer kind** — *"do I drive this faction?"*. A `ClaimSeatCommand` is a command
 /// that answers on this envelope, exactly as the save verbs do — but it is the one answer this module
@@ -242,6 +254,52 @@ pub(crate) fn dispatch(
                     slot: dict_string(ask, "slot"),
                 },
                 SAVE_REPLY_TIMEOUT,
+            )
+        }
+        QUERY_KIND_LIST_SCENARIOS => {
+            return send(
+                host,
+                port,
+                request_id,
+                CommandPayload::ListScenarios { request_id },
+                SCENARIO_REPLY_TIMEOUT,
+            )
+        }
+        QUERY_KIND_READ_SCENARIO => {
+            return send(
+                host,
+                port,
+                request_id,
+                CommandPayload::ReadScenario {
+                    request_id,
+                    path: dict_string(ask, "path"),
+                },
+                SCENARIO_REPLY_TIMEOUT,
+            )
+        }
+        QUERY_KIND_WRITE_SCENARIO => {
+            return send(
+                host,
+                port,
+                request_id,
+                CommandPayload::WriteScenario {
+                    request_id,
+                    path: dict_string(ask, "path"),
+                    text: dict_string(ask, "text"),
+                },
+                SCENARIO_REPLY_TIMEOUT,
+            )
+        }
+        QUERY_KIND_LOAD_SCENARIO => {
+            return send(
+                host,
+                port,
+                request_id,
+                CommandPayload::LoadScenario {
+                    request_id,
+                    path: dict_string(ask, "path"),
+                },
+                SCENARIO_REPLY_TIMEOUT,
             )
         }
         _ => {}
@@ -752,6 +810,14 @@ fn answer_to_dict(answer: &QueryAnswer) -> VarDictionary {
                 refusals.push(&line.to_variant());
             }
             let _ = dict.insert("refusals", &refusals);
+            let _ = dict.insert("error", "");
+            let mut files = VarArray::new();
+            for file in &reply.files {
+                files.push(&file.to_variant());
+            }
+            let _ = dict.insert("files", &files);
+            let _ = dict.insert("text", reply.text.as_str());
+            let _ = dict.insert("schema", reply.schema.as_str());
         }
         // Shaped like `save_op`'s: a command's answer riding the query channel, with `ok` from the
         // reply itself and the server's refusal token (`sim_runtime::commands::seat_error`) in

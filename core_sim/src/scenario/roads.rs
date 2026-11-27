@@ -26,15 +26,17 @@ use crate::routes::{
 use crate::LadderConfigHandle;
 
 /// One held road tile.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RoadEntry {
     /// The tile, `[x, y]`, exactly.
+    #[schemars(extend("x-pick" = "tile"))]
     pub at: [u32; 2],
     /// A rung id on the `route` branch, as the ladder config spells it.
     pub rung: String,
     /// The band that keeps the road: a band id of this faction. Required on a rung that declares a
     /// verb (a built rung), refused on one that does not (the free floor has no keeper).
+    #[schemars(extend("x-pick" = "band"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keeper: Option<String>,
 }

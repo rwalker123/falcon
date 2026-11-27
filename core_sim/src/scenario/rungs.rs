@@ -45,7 +45,7 @@ use crate::{
 };
 
 /// One entry of a faction's `rungs` list.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RungEntry {
     /// A source already holding a rung.
@@ -55,16 +55,18 @@ pub enum RungEntry {
 }
 
 /// A source held at a rung. Which fields it needs follows the rung's branch's source kind.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HeldRung {
     /// A rung id as the ladder spells it, `plant:tended`.
     pub rung: String,
     /// The tile, for a patch or a working.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("x-pick" = "tile"))]
     pub at: Option<[u32; 2]>,
     /// The herd id, for a herd.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("x-pick" = "herd"))]
     pub herd: Option<String>,
     /// The material, for a working.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,10 +78,12 @@ pub struct HeldRung {
 
 /// `CommandPayload::BuildRung`, with no faction (the section's own) and the band named by its
 /// scenario id.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend("x-pick-tile" = ["target_x", "target_y"]))]
 pub struct BuildRungEntry {
     /// The keeper band's scenario id.
+    #[schemars(extend("x-pick" = "band"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub band: Option<String>,
     pub verb: String,
@@ -87,6 +91,7 @@ pub struct BuildRungEntry {
     pub target_x: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_y: Option<u32>,
+    #[schemars(extend("x-pick" = "herd"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herd_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

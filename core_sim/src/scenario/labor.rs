@@ -35,7 +35,7 @@ use crate::source_holders::{take_source_key, ScenarioLaborReservations};
 const NO_MAX_WORKERS: u32 = 0;
 
 /// One labor entry, tagged by its verb: `{ "assign_labor": { ... } }`.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LaborEntry {
     AssignLabor(AssignLaborEntry),
@@ -54,10 +54,12 @@ pub const BAND_ORDER_CLAIM: &str = "claim";
 /// `priority` belong to `set` (the wire's `BandOrderAction::Set` fields); a row is named by
 /// `target_x` + `target_y` (a patch or working) or `herd_id` (a scenario herd id) and belongs to
 /// `release` and `claim` (the wire's `Option<BandOrderRow>`).
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend("x-pick-tile" = ["target_x", "target_y"]))]
 pub struct BandOrderEntry {
     /// The band's id in this file.
+    #[schemars(extend("x-pick" = "band"))]
     pub band: String,
     pub kind: String,
     /// `"set"`, `"release"` or `"claim"`.
@@ -70,15 +72,18 @@ pub struct BandOrderEntry {
     pub target_x: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_y: Option<u32>,
+    #[schemars(extend("x-pick" = "herd"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herd_id: Option<String>,
 }
 
 /// `CommandPayload::AssignLabor`, less `faction_id`, `band_id` (now `band`) and the retired `policy`.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend("x-pick-tile" = ["target_x", "target_y"]))]
 pub struct AssignLaborEntry {
     /// The band's id in this file.
+    #[schemars(extend("x-pick" = "band"))]
     pub band: String,
     pub role: String,
     pub workers: u32,
@@ -86,6 +91,7 @@ pub struct AssignLaborEntry {
     pub target_x: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_y: Option<u32>,
+    #[schemars(extend("x-pick" = "herd"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fauna_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,15 +105,18 @@ pub struct AssignLaborEntry {
 }
 
 /// `CommandPayload::WorkPriority`, less `faction_id` and with `band_id` replaced by `band`.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend("x-pick-tile" = ["target_x", "target_y"]))]
 pub struct WorkPriorityEntry {
     /// The band's id in this file.
+    #[schemars(extend("x-pick" = "band"))]
     pub band: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_x: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_y: Option<u32>,
+    #[schemars(extend("x-pick" = "herd"))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herd_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
