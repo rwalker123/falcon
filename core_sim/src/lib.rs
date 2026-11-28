@@ -108,6 +108,7 @@ pub mod scenario;
 pub mod seats;
 mod sedentarization;
 mod sedentarization_config;
+pub mod settlement;
 mod settlement_stage_config;
 pub mod sim_state;
 mod sites;
@@ -184,12 +185,12 @@ pub use components::{
     FoodBatch, FoodMix, FoundingWalk, ItemInFlight, KeepShare, KeepingIssue, KeepingToolLine,
     KitOrder, KnowledgeFragment, LaborAllocation, LaborAssignment, LaborTarget, LeadershipReading,
     LocalStore, MaterialBatch, MaterialDraw, MoraleCause, MusterBench, MusterKit, MusterPlan,
-    OrderOwner, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, ScoutPack, Settlement,
-    ShedCrew, ShedFacts, ShedStep, ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts,
-    SourceYield, StaffedCrew, StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile,
-    TownCenter, TransferCause, TransferCounterparty, TransferCrossing, TransferDirection,
-    TransferLedger, TransferLink, YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER,
-    MATERIAL_DUST_UNITS, MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
+    OrderOwner, PoolToeLine, PopulationCohort, PowerNode, ResidentBand, ScoutPack, ShedCrew,
+    ShedFacts, ShedStep, ShedSubject, ShipmentTerms, SourcePriority, SourceShedFacts, SourceYield,
+    StaffedCrew, StartingUnit, StationReport, StrangersOrder, TakeSelection, Tile, TransferCause,
+    TransferCounterparty, TransferCrossing, TransferDirection, TransferLedger, TransferLink,
+    YieldRange, DEFAULT_ESCAPEMENT_FLOOR, FODDER, FOOD, HEAD_ORDER, MATERIAL_DUST_UNITS,
+    MIN_ORDER_COUNT, NO_IMPROVEMENT_UNDERWAY, STRIP_IT_BARE,
 };
 pub use config_fingerprint::{
     current_config_fingerprint, drift_between, ConfigDigest, ConfigFingerprint,
@@ -477,13 +478,12 @@ pub use routes::{
     NEAR_ENOUGH_TO_KEEP, NO_HERD_HAS_CROSSED, NO_REACH_HELD_OPEN, PAVING_DISCOVERY_ID,
     ROADBUILDING_DISCOVERY_ID,
 };
-pub use sedentarization::{
-    sedentarization_tick, SedentarizationEntry, SedentarizationScore, SedentarizationStage,
-};
+pub use sedentarization::{sedentarization_tick, SedentarizationEntry, SedentarizationScore};
 pub use sedentarization_config::{
     load_sedentarization_config_from_env, SedentarizationConfig, SedentarizationConfigHandle,
     SedentarizationConfigMetadata,
 };
+pub use settlement::{advance_settlements, SettlementStages};
 pub use settlement_stage_config::{
     load_settlement_stage_config_from_env, resolve_settlement_stage, SettlementStageConfig,
     SettlementStageConfigHandle, SettlementStageConfigMetadata, SettlementStageDef,
@@ -1135,6 +1135,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(connections::ConnectionLedger::default())
         .insert_resource(connections::GatheringLedger::default())
         .insert_resource(tribe::TribeRegistry::default())
+        .insert_resource(settlement::SettlementStages::default())
         .insert_resource(systems::HeartLedger::default())
         .insert_resource(systems::CulturePressureLedger::default())
         .insert_resource(chief_proposals::ChiefProposalBook::default())
@@ -1703,6 +1704,12 @@ pub fn build_headless_app() -> App {
                     .after(tribe::advance_tribes)
                     .after(mobility::mobility_tick)
                     .after(systems::publish_trade_telemetry),
+                // **Settlement stages are read off the tribes this turn settled**: a tribe formed,
+                // joined or dissolved this turn is read as it now stands. The tribe closeness pull, which
+                // runs earlier, sees last turn's stages.
+                settlement::advance_settlements
+                    .after(tribe::advance_tribes)
+                    .before(tribe_levy::advance_tribe_levy),
                 // The roaming counterpart: after `advance_band_movement`, which records the turn's
                 // steps following a herd (any roam state) and which this drains — that order is
                 // carried by the whole run between them, and the one edge declared here is the

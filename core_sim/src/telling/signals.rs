@@ -25,6 +25,8 @@ use crate::{
     scalar::scalar_zero,
     scalar::Scalar,
     sedentarization::SedentarizationScore,
+    settlement::SettlementStages,
+    settlement_stage_config::SettlementStageConfig,
     sites::DiscoveredSites,
     tribe::TribeRegistry,
 };
@@ -56,8 +58,16 @@ pub const TRIBES_FORMED_TOTAL_KEY: &str = "internal.tribes.formed_total";
 /// a registered signal so the authored `voice.medium_*` beats can gate on it with `crosses`.
 pub const VOICE_MEDIUM_INDEX: &str = "voice.medium_index";
 
+/// `1` while the player's settlement stands at or above the city stage, else `0` — a level, so a
+/// beat gates on `crosses` rising through `1`. The stage is found by [`SETTLEMENT_CITY_STAGE_ID`] in
+/// `settlement_stage_config.json`, never by position.
+pub const SETTLEMENT_CITY_REACHED: &str = "settlement.city_reached";
+
+/// The id of the stage row [`SETTLEMENT_CITY_REACHED`] reads.
+pub const SETTLEMENT_CITY_STAGE_ID: &str = "city";
+
 /// Every signal id content may reference, other than the per-axis culture family.
-const BASE_SIGNALS: [&str; 16] = [
+const BASE_SIGNALS: [&str; 17] = [
     VOICE_MEDIUM_INDEX,
     "turn.index",
     "band.count",
@@ -66,6 +76,7 @@ const BASE_SIGNALS: [&str; 16] = [
     "sites.discovered_this_turn",
     "gatherings.held_this_turn",
     "tribes.formed_this_turn",
+    SETTLEMENT_CITY_REACHED,
     "leadership.chiefs_emerged_this_turn",
     "leadership.councils_emerged_this_turn",
     "leadership.bands_hungry_under_leader",
@@ -138,6 +149,9 @@ pub struct SignalSources<'a> {
     pub discovered_sites: &'a DiscoveredSites,
     pub gatherings: &'a GatheringLedger,
     pub tribes: &'a TribeRegistry,
+    /// Every settlement's resolved stage, and the ordered stage ladder it indexes.
+    pub settlement_stages: &'a SettlementStages,
+    pub settlement_config: &'a SettlementStageConfig,
     pub discovery_progress: &'a DiscoveryProgressLedger,
     pub herds: &'a HerdRegistry,
     pub culture: &'a CultureManager,
@@ -296,6 +310,27 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, CumulativeT
     sample.set(
         "tribes.formed_this_turn",
         (tribes_total - sources.previous.tribes_formed).max(0.0),
+    );
+
+    // The player's settlement (its tribe's stage when in a tribe, else the band's own) at or above
+    // the city stage; the best of the faction's bands, so one city is enough.
+    let city_index = sources
+        .settlement_config
+        .stages
+        .iter()
+        .position(|stage| stage.id == SETTLEMENT_CITY_STAGE_ID);
+    let city_reached = city_index.is_some_and(|city| {
+        sources.bands.iter().any(|band| {
+            let stage = match sources.tribes.tribe_of(band.band) {
+                Some(tribe) => sources.settlement_stages.of_tribe(tribe.id),
+                None => sources.settlement_stages.of_band(band.band),
+            };
+            stage.is_some_and(|stage| stage >= city)
+        })
+    });
+    sample.set(
+        SETTLEMENT_CITY_REACHED,
+        if city_reached { 1.0 } else { 0.0 },
     );
 
     for (signal, discovery_id) in [

@@ -62,8 +62,9 @@ command center**: shown whenever ≥1 player band exists, always displaying a
   reflow off the reserved edge. All geometry/typography are named constants +
   `HudStyle`; the map-facing edge gets a `SIGNAL_DEEP` accent seam.
 - **Header chrome.** Settlement **stage glyph + name + stage label + the band's hex coordinates**
-  (`set_header` — glyph/label from the band marker's `settlement_stage_icon` /
-  `settlement_stage_label`, neutral glyph fallback), a `◀ n/N ▶` **cycler**
+  (`set_header` — glyph/label from `HudFormat.settlement_stage_view(band)`: the TRIBE's stage with its
+  member count, `Village · 3 bands`, when the band is in a tribe — `tribe_settlement_stage_*` +
+  `tribe_member_names` — else the band's own `settlement_stage_*`; neutral glyph fallback), a `◀ n/N ▶` **cycler**
   (`set_cycler`) over `_player_bands`, a 2×2 **dock chooser** (active edge highlighted), and a
   **collapse** toggle. `cycle_requested(delta)` → Main relays to `Hud.cycle_panel_band`.
   **WHERE THE VERBS RENDER DEPENDS ON THE DOCK'S ORIENTATION** — on this row between the cycler and
@@ -1564,19 +1565,13 @@ rollup on its next `_push_bands`.
 
 **THE FOUR-ZONE BODY'S OWN THREE ASSERTIONS**, none of which any frame here can hold:
 
-- **THE SETTLING ROW IS KEYED BY A PLAYER WORD, NEVER BY THE SIM'S WIRE TOKEN.**
-  `SedentarizationStage::as_str()` spells the three stages `none` / `soft` / `hard` and
-  `FactionReadouts.SEDENTARIZATION_STAGE_NONE` says outright that they are "not a word anyone sees" —
-  but the row passed the token straight through as its key, so the page rendered
-  `soft  ▰▰▰▱▱  62/100`, a lowercase enum beside the capitalised `Nomadic` the below-threshold case
-  already had. `HudWorkVocab.FACTION_SETTLING_STAGE_LABELS` is the one home for those words (`none` →
-  Nomadic, `soft` → Seasonal base, `hard` → Ready to settle, taken from the sim's own prompt wording,
-  **provisional pending playtest** like `ZONE_TAB_KNOWLEDGE`'s abbreviation), an absent or unrecognised
-  stage falls through it to `Nomadic` rather than leaking the token, and `FACTION_SETTLING_NOMADIC`
-  reads the table's own `none` row so that word has one home. The harness asserts the LABEL by
-  equality; asserting the raw token, which it did, is what locked the bug in.
+- **THE SETTLING ROW CARRIES NO STAGE.** The sedentarization meter is a readout of the settle score and
+  its five point components only (`sedentarization.stage` left the wire with #176; a settlement's stage
+  is resolved each turn from people, store rung, stored food and belief). The row is keyed
+  `HudWorkVocab.FACTION_SETTLING_SCORE_KEY` (`Pull to settle`), valued `meter  N/100`, tooltip the five
+  inputs.
 - **`_assert_faction_knowledge_zone`** — each of the three blocks through the thing only IT can say
-  (the SETTLING head's readout naming both the stage and the score, a FINISHED track reading `known`
+  (the SETTLING head's readout naming the score, a FINISHED track reading `known`
   beside a still-climbing one reading a FILLED meter and a percent, the DISCOVERIES head counting
   INSTANCES where its rows count KINDS, the twice-found kind reading `2`, and the `+N more` row the
   cap owes). **Each block omits itself when its data is absent**, so a zone that had lost two of the

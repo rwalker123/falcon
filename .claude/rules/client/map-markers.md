@@ -511,3 +511,9 @@ dot at upper-right, which is why upper-left is where the disc goes.
   mark and arc together), `map_held_farm`, `map_held_pen`, `map_held_ranch`, and `_close` twins at the zoom the player
   works at, with assertions off the queued entries.
 
+
+**THE STAGE A BAND WEARS IS ITS TRIBE'S (#176).** `HudFormat.settlement_stage_view(unit)` returns
+`{id, icon, label}`: the tribe's `tribe_settlement_stage_*` (label suffixed with the member count from
+`tribe_member_names`, `Village · 3 bands`) when the band is in a tribe, else its own
+`settlement_stage_*`. The map token, the selection card's roster row and the Band panel header all read
+it, so one band wears one mark everywhere.

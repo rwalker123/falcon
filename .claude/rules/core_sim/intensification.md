@@ -2378,7 +2378,7 @@ an unknown or non-per-tile branch is refused by name rather than read as the til
 
 `SourceKind::Tile` is a source that **yields nothing**: a **standing** on the ladder, a **standing
 bill**, a **neglect clock** and a **grace**, kept by a **crew row** exactly as a deposit's working is.
-**Two tile branches ship: `food_stores`** (`unstored` -> `storage_pit`, the storage pit - it holds its owner band's dry food on the tile;
+**Two tile branches ship: `food_stores`** (`unstored` -> `storage_pit` -> `granary`, the storage pit and the granary above it (verb `store`, gated on the `granaries` lesson the pit teaches, 2000 capacity; `campaign.md` -> "Settlements: derived clusters") - a pit holds its owner band's dry food on the tile;
 see `campaign.md` -> "A storage pit is its band's second larder") **and `belief`** (`gathering_ground` -> `monument`, verb `raise`, the
 first rung with no yield; what it buys is `belief_config.json` -> `improvement_belief`, see `belief.md`
 -> "The monument source"). A tile branch is a JSON edit, and the engine never names one:
@@ -2742,7 +2742,7 @@ its crew like any other: with no labor row on it, it rots after its grace.
 
 | key | meaning | refused when |
 |---|---|---|
-| `held.rung` | The rung id, `branch:rung` (`plant:farm`) | not on the ladder; a branch root; a road, tile or band branch |
+| `held.rung` | The rung id, `branch:rung` (`plant:farm`) | not on the ladder; a branch root; a road or band branch. A **tile** branch (`food_stores`) is held at `at`: the store is placed owned by the faction's band nearest the tile and seated at the rung's top (a pit or granary, so `settlement_stage_config.json`'s store criterion reads it; it needs a crew row to be kept) |
 | `held.at` | `[x, y]` of the patch, or of the working | absent for a patch or working; given for a herd; no patch or working there |
 | `held.herd` | The herd's scenario id (the `herds` section's `id`) | absent for a herd; given for a patch or working; an id the file's `herds` section does not declare |
 | `held.material` | The deposit material of a working | absent for a working; given for anything else; not a deposit on this rung's branch |
@@ -2757,5 +2757,7 @@ refused exactly where `build <verb>` is: a source no band of the faction works, 
 band already holds. `herd_id` is a scenario herd id, mapped to the runtime id at replay. Refused in
 pass 1 when `band` names no band in the file, `verb` is not a ladder verb, or `herd_id` is not an id
 the file's `herds` section declares.
+
+`progress` is optional: the work already done on the rung the build raises, **in work units of that rung** (the unit its `build.work_cost` is quoted in; the improvement's one position is the rung's base plus it), applied right after the build is declared (`rungs::bank_progress`, through `TileImprovement::set_position`). **A tile build (a store) only.** Refused when it is not finite and zero or more, when the verb is not a tile build, and at or above the rung's whole work (a finished rung is a `held` rung, so hold it instead). The held-rung climb applies first, so a granary build opens on a held pit. Export does not write progress (build progress toward the next rung is not exported).
 
 **Export** writes `held` rungs for the patches and herds the faction owns above their branch's root (a patch with its committed crop) and the workings it has an `extract` row on, and a `build_rung` for each declared climb (deduplicated across the bands it is queued on; a road or band improvement names the declaring band, and one whose band has no scenario id is noted). Build progress toward the next rung is not written.

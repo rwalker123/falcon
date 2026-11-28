@@ -464,6 +464,27 @@ func run(harness) -> void:
 	await h._settle()
 	await h._save("forage_policy")
 
+	# State 1-tribe-stage (#176) -- a band in a formed tribe wears the TRIBE's stage, not its own: the
+	# band's own stage is a camp, the tribe's is a village, and the header + roster mark read
+	# `Village · 3 bands`.
+	var tribe_stage_band := BandFx.band_fixture()
+	tribe_stage_band["tribe_settlement_stage_id"] = "village"
+	tribe_stage_band["tribe_settlement_stage_icon"] = "🏘️"
+	tribe_stage_band["tribe_settlement_stage_label"] = "Village"
+	tribe_stage_band["tribe_name"] = "Sandreach tribe"
+	tribe_stage_band["tribe_member_names"] = ["Ashfoot", "Fenmere", "Cairnholt"]
+	h._hud.show_unit_selection(tribe_stage_band)
+	await h._settle()
+	await h._save("band_tribe_stage")
+	var tribe_view := HudFormat.settlement_stage_view(tribe_stage_band)
+	h._assert_hud("tribe band wears the tribe's stage with its member count (got '%s')" % tribe_view["label"],
+		tribe_view["id"] == "village" and tribe_view["label"] == "Village · 3 bands")
+	var lone_band := {"settlement_stage_id": "camp", "settlement_stage_label": "Camp",
+		"tribe_settlement_stage_id": "", "tribe_member_names": []}
+	var lone_view := HudFormat.settlement_stage_view(lone_band)
+	h._assert_hud("a band in no tribe wears its own stage (got '%s')" % lone_view["label"],
+		lone_view["id"] == "camp" and lone_view["label"] == "Camp")
+
 	# State 1-food-a — GOOD food, breakdown OPEN. The breakdown renders in a POPOVER, never inline
 	# (growing the row in place is what clipped the Band panel's fixed-height band zone), so the frame
 	# shows the indented `Gathered · Hunted · Consumed` rows in a small card under the row. Driven through
@@ -2641,7 +2662,7 @@ func _hay_ledger_states() -> void:
 	# one shows `Tribe <bar> · <phrase>`, or one dim line with no partner; a chiefless band in no tribe
 	# shows nothing.
 	var tribe_weights := {"origin": 3.0, "likeness": 3.0, "tie": 2.0, "belief": 1.0,
-		"monument": 2.0, "acting": 1.0}
+		"monument": 2.0, "acting": 1.0, "settlement": 2.0}
 	var tribe_base := {"leader_name": "Orrin", "leader_kind": 1, "leadership_practice": 10.0,
 		"leadership_threshold": 10.0, "leadership_from_builds": 10.0, "leadership_from_splits": 0.0,
 		"leadership_from_herd": 0.0, "leadership_from_stages": 0.0, "tribe_threshold": TRIBE_THRESHOLD,

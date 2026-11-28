@@ -1707,6 +1707,10 @@ table PopulationCohortState {
   tribeScoutingRange:uint = 0;
   // The tribe's works, in the order they were added.
   tribeWorks:[TribeWorkState];
+  // THE STAGE OF THE TRIBE THIS BAND BELONGS TO (#176), the same view `settlementStage` uses, read over
+  // all the tribe's members; the default (empty id) in no tribe, for a foreign band and for a party.
+  // Appended last.
+  tribeSettlementStage:SettlementStageView;
 }
 
 
@@ -3006,7 +3010,6 @@ table FactionInventoryState {
 table SedentarizationState {
   faction:uint;
   score:float = 0;
-  stage:string;
   // The BELIEF input's share of this turn's raw points (#701): 100 x weights.belief x belief_norm,
   // where belief_norm is the population-weighted mean over the faction's resident bands of
   // clamp(belief on the band's STANDING tile / references.belief, 0, 1). Pre-EMA - the score above
@@ -7274,7 +7277,7 @@ table BreedingPeopleState {
   fading:bool = false;
 }
 
-// THE SIX INPUTS TO A TRIBE'S POINTS RATE - `PopulationCohortState.tribeWeights` (the weights) and
+// THE SEVEN INPUTS TO A TRIBE'S POINTS RATE - `PopulationCohortState.tribeWeights` (the weights) and
 // `TribePairState.contribution` (each input times its weight: its points per turn; the sum is the
 // pair's rate). Appended last.
 table TribeClosenessState {
@@ -7284,6 +7287,9 @@ table TribeClosenessState {
   belief:float = 0;
   monument:float = 0;
   acting:float = 0;
+  // The settlement-pull input (#176): a pair banks faster while either band belongs to a tribe at
+  // village stage or above. Appended last.
+  settlement:float = 0;
 }
 
 // ONE PARTNER BAND OF A BAND'S PEOPLE, AND HOW CLOSE THE TWO ARE - a row of

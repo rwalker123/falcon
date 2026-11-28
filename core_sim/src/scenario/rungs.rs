@@ -40,6 +40,7 @@ use crate::intensification::{LadderConfig, RungDef, RungTrait, SourceKind};
 use crate::labor_config::LaborConfigHandle;
 use crate::orders::FactionId;
 use crate::resources::{SimulationConfig, TileRegistry};
+use crate::tile_improvement::{tile_rung_span, TileImprovementRegistry};
 use crate::{
     pen_site_in_world, HerdRegistry, LadderConfigHandle, PopulationCohort, RungId, Tile, VerbId,
 };
@@ -98,6 +99,12 @@ pub struct BuildRungEntry {
     pub material: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// The work already done on the rung this build raises, in **work units** of that rung (the unit
+    /// its `build.work_cost` is quoted in), applied right after the build is declared. A tile build
+    /// only (a store), where the improvement's one position is the rung's base plus this. Absent
+    /// starts the build at nothing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<f32>,
 }
 
 /// **The source kinds a scenario can hold a rung on.**
@@ -106,6 +113,8 @@ enum HeldKind {
     Patch,
     Herd,
     Deposit,
+    /// A fixed store on one tile (the `food_stores` branch).
+    Tile,
 }
 
 impl HeldKind {
@@ -114,6 +123,7 @@ impl HeldKind {
             Some(SourceKind::Patch) => Ok(Self::Patch),
             Some(SourceKind::Herd) => Ok(Self::Herd),
             Some(SourceKind::Deposit) => Ok(Self::Deposit),
+            Some(SourceKind::Tile) => Ok(Self::Tile),
             Some(other) => Err(format!(
                 "a {} rung is not a `held` source a scenario can set",
                 other.as_str()
@@ -127,6 +137,7 @@ impl HeldKind {
             Self::Patch => "patch",
             Self::Herd => "herd",
             Self::Deposit => "deposit",
+            Self::Tile => "tile improvement",
         }
     }
 }
@@ -273,6 +284,7 @@ fn check_held(
     let source = match (kind, held.at, &held.herd, &held.material) {
         (HeldKind::Patch, Some([x, y]), _, _) => Some(format!("patch ({x}, {y})")),
         (HeldKind::Herd, _, Some(herd), _) => Some(format!("herd {herd}")),
+        (HeldKind::Tile, Some([x, y]), _, _) => Some(format!("{} at ({x}, {y})", held.rung)),
         (HeldKind::Deposit, Some([x, y]), _, Some(material)) => {
             Some(format!("{material} working at ({x}, {y})"))
         }
@@ -313,11 +325,38 @@ fn check_build(
         }
     }
     let verb = build.verb.trim().to_ascii_lowercase();
-    if ctx.ladder.rung_for_verb(VerbId::new(&verb)).is_none() {
+    let rung = ctx.ladder.rung_for_verb(VerbId::new(&verb));
+    if rung.is_none() {
         refusals.push(ScenarioRefusal::new(
             format!("{at}.build_rung.verb"),
             format!("'{}' is not a build verb on the ladder", build.verb),
         ));
+    }
+    if let Some(progress) = build.progress {
+        let path = format!("{at}.build_rung.progress");
+        if !progress.is_finite() || progress < 0.0 {
+            refusals.push(ScenarioRefusal::new(
+                path,
+                "progress is work already done: a finite amount, zero or more",
+            ));
+        } else if let Some(rung) = rung {
+            if ctx.ladder.source_kind(rung.branch) != Some(SourceKind::Tile) {
+                refusals.push(ScenarioRefusal::new(
+                    path,
+                    "progress is for a tile build (a store) only",
+                ));
+            } else if let Some(cost) = crate::tile_improvement::tile_rung_cost(rung) {
+                if progress >= cost {
+                    refusals.push(ScenarioRefusal::new(
+                        path,
+                        format!(
+                            "{progress} is the whole {cost} work of the {} rung: a finished rung is a `held` rung, so hold it instead",
+                            rung.label.to_lowercase()
+                        ),
+                    ));
+                }
+            }
+        }
     }
 }
 
@@ -444,6 +483,21 @@ fn climb_held(world: &mut World, faction: FactionId, held: &HeldRung) -> Result<
                 };
                 (ladder.at_or_above(working.rung(), laid_id), target)
             }
+            HeldKind::Tile => {
+                let tile = tile.ok_or_else(|| format!("{named}: a tile store needs 'at'"))?;
+                let held_rung = world
+                    .resource::<TileImprovementRegistry>()
+                    .get(tile, laid_id.branch)
+                    .map(|improvement| improvement.held_rung());
+                let target = LaborTarget::Tile {
+                    tile,
+                    branch: laid_id.branch,
+                };
+                (
+                    held_rung.is_some_and(|rung| ladder.at_or_above(rung, laid_id)),
+                    target,
+                )
+            }
         };
         if holds {
             continue;
@@ -484,6 +538,12 @@ fn open_working(world: &mut World, tile: UVec2, material: &str, named: &str) -> 
 /// **The standing tile of the faction's band nearest `target`** by hex distance, ties to the lowest
 /// [`BandId`]. A scenario queues no Corral, so this band stands in for the one that would.
 fn nearest_band_tile(world: &mut World, faction: FactionId, target: UVec2) -> Option<UVec2> {
+    nearest_band(world, faction, target).map(|(_, position)| position)
+}
+
+/// **The faction's band nearest `target`** and its standing tile, by hex distance, ties to the lowest
+/// [`BandId`].
+fn nearest_band(world: &mut World, faction: FactionId, target: UVec2) -> Option<(BandId, UVec2)> {
     let (width, wrap) = {
         let tiles = world.resource::<TileRegistry>();
         let wrap = world
@@ -502,7 +562,6 @@ fn nearest_band_tile(world: &mut World, faction: FactionId, target: UVec2) -> Op
         .into_iter()
         .filter_map(|(id, tile)| Some((id, world.get::<Tile>(tile)?.position)))
         .min_by_key(|(id, position)| (hex_distance_wrapped(*position, target, width, wrap), *id))
-        .map(|(_, position)| position)
 }
 
 /// **Write what the game's own completion of `laid` leaves on the source**, through the source's
@@ -594,6 +653,17 @@ fn write_completion(
             if !herd.complete_rung_as_built(faction, laid, &fauna, ladder, pen_tile) {
                 return Err("the herd could not be raised (another people owns it)".to_string());
             }
+        }
+        HeldKind::Tile => {
+            let tile = tile.ok_or("a tile store needs 'at'")?;
+            // The store is kept by the band of the faction nearest it, as `build_rung`'s keeper would
+            // be: the owner a store needs to hold food (`settlement.rs` counts only an owned store).
+            let owner = nearest_band(world, faction, tile).map(|(id, _)| id);
+            let (base, width) = tile_rung_span(laid_id, ladder);
+            world
+                .resource_mut::<TileImprovementRegistry>()
+                .place_owned(tile, laid_id.branch, faction, owner, ladder)
+                .set_position(base + width, ladder);
         }
         HeldKind::Deposit => {
             let tile = tile.ok_or("a working needs 'at'")?;
@@ -746,6 +816,7 @@ pub(super) fn export_builds_and_pens(
                         herd_id: None,
                         material: None,
                         branch: None,
+                        progress: None,
                     };
                     match &declaration.source {
                         BuildSource::Patch(tile) | BuildSource::Tile { tile, .. } => {
@@ -890,5 +961,34 @@ pub(super) fn apply_builds(
             refusals.push(ScenarioRefusal::new(at, refusal.to_string()));
             return;
         }
+        if let Some(progress) = build.progress {
+            if let Err(reason) = bank_progress(world, build, progress) {
+                refusals.push(ScenarioRefusal::new(
+                    format!("{at}.build_rung.progress"),
+                    reason,
+                ));
+                return;
+            }
+        }
     }
+}
+
+/// **Seat a tile build's work already done**: the improvement's one position is the raising rung's
+/// base plus `progress` work units, written through its own mutator, the position the game's build
+/// accrual advances.
+fn bank_progress(world: &mut World, build: &BuildRungEntry, progress: f32) -> Result<(), String> {
+    let ladder = world.resource::<LadderConfigHandle>().get();
+    let rung = ladder
+        .rung_for_verb(VerbId::new(&build.verb.trim().to_ascii_lowercase()))
+        .ok_or("the verb names no rung")?;
+    let (Some(x), Some(y)) = (build.target_x, build.target_y) else {
+        return Err("progress needs the build's tile".to_string());
+    };
+    let (base, _) = tile_rung_span(rung.rung_id(), &ladder);
+    let mut registry = world.resource_mut::<TileImprovementRegistry>();
+    let improvement = registry
+        .get_mut(UVec2::new(x, y), rung.branch)
+        .ok_or("there is no improvement on that tile to carry the work")?;
+    improvement.set_position(base + progress, &ladder);
+    Ok(())
 }

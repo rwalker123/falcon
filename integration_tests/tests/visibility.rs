@@ -2,8 +2,8 @@ mod common;
 
 use core_sim::sim_state::{capture_sim_state, restore_sim_state};
 use core_sim::{
-    build_test_app, FactionId, FactionRegistry, PopulationCohort, Settlement, SnapshotHistory,
-    StartingUnit, Tile, TownCenter, ViewerFaction, VisibilityLedger, VisibilityState,
+    build_test_app, FactionId, FactionRegistry, PopulationCohort, SnapshotHistory, StartingUnit,
+    Tile, ViewerFaction, VisibilityLedger, VisibilityState,
 };
 
 /// **Seat a real two-faction roster**: faction 0 the player's, faction 1 AI-driven.
@@ -148,55 +148,6 @@ fn visibility_decay_over_turns() {
             "Tile at (99,99) should eventually decay if not near visibility source, got {:?}",
             state
         );
-    }
-}
-
-/// Test that settlements with TownCenter provide visibility.
-#[test]
-fn settlement_provides_visibility() {
-    common::ensure_test_config();
-    let mut app = build_test_app();
-
-    app.update();
-
-    // Find a settlement with TownCenter and check its visibility
-    let settlement_pos = {
-        let mut query = app.world.query::<(&Settlement, &TownCenter)>();
-        query
-            .iter(&app.world)
-            .next()
-            .map(|(settlement, _)| (settlement.faction, settlement.position))
-    };
-
-    if let Some((faction, pos)) = settlement_pos {
-        // Run visibility systems
-        app.update();
-
-        let ledger = app.world.resource::<VisibilityLedger>();
-
-        // Settlement tile should be Active
-        let state = ledger.visibility_state(faction, pos.x, pos.y);
-        assert_eq!(
-            state,
-            VisibilityState::Active,
-            "Settlement tile should be Active"
-        );
-
-        // Nearby tiles within TownCenter range (default 5) should also be visible
-        // Check a few adjacent tiles
-        for dx in -2i32..=2 {
-            for dy in -2i32..=2 {
-                let check_x = (pos.x as i32 + dx).max(0) as u32;
-                let check_y = (pos.y as i32 + dy).max(0) as u32;
-                let nearby_state = ledger.visibility_state(faction, check_x, check_y);
-                assert!(
-                    nearby_state != VisibilityState::Unexplored,
-                    "Tile ({}, {}) near settlement should be visible",
-                    check_x,
-                    check_y
-                );
-            }
-        }
     }
 }
 

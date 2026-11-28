@@ -1,0 +1,651 @@
+{
+  "name": "settlement_city_playtest",
+  "opening": false,
+  "note": "A town tribe of ten kin bands under chiefs (1500 people, three tiles apart) a granary short of a city: the storage pit at (13, 10) is held, Rushford (home) crews the granary with its own hands (105 of 120 work done) and every band's elders keep its food (the herds section places the game around the camps), the larders hold over 1500 food and the dead buried at (13, 11) stand at 40 belief. The tribe becomes a City about turn 4 and holds it.",
+  "world": {
+    "preset": "earthlike",
+    "width": 80,
+    "height": 52,
+    "seed": 41733,
+    "profile": "late_forager_tribe",
+    "archetypes": {
+      "major": 0,
+      "minor": 0
+    }
+  },
+  "factions": [
+    {
+      "faction": 0,
+      "knowledge": [
+        "messengers",
+        "ritual",
+        "storage",
+        "knapping",
+        "woodcraft",
+        "bone_working",
+        "tanning",
+        "weaving",
+        "herd_lore",
+        "travois",
+        "cultivation",
+        "herding",
+        "granaries",
+        "quarrying",
+        "roadbuilding",
+        "penning",
+        "seed_selection",
+        "worked_land",
+        "selective_breeding"
+      ],
+      "rungs": [
+        {
+          "held": {
+            "rung": "food_stores:storage_pit",
+            "at": [
+              13,
+              10
+            ]
+          }
+        },
+        {
+          "build_rung": {
+            "band": null,
+            "verb": "store",
+            "target_x": 13,
+            "target_y": 10,
+            "herd_id": null,
+            "material": null,
+            "branch": null,
+            "progress": 105.0
+          }
+        }
+      ],
+      "bands": [
+        {
+          "id": "home",
+          "at": [
+            13,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.1,
+            "working": 0.8,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 110,
+              "big_game": 12,
+              "sledding": 20,
+              "tillage": 12,
+              "hurdling": 12
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "east",
+          "at": [
+            16,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.1,
+            "working": 0.8,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "west",
+          "at": [
+            10,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.1,
+            "working": 0.8,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "south",
+          "at": [
+            13,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.1,
+            "working": 0.8,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "southeast",
+          "at": [
+            16,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.1,
+            "working": 0.8,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "southwest",
+          "at": [
+            10,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.1,
+            "working": 0.8,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "fareast_south",
+          "at": [
+            19,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.1,
+            "working": 0.8,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "fareast",
+          "at": [
+            19,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.1,
+            "working": 0.8,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "farwest",
+          "at": [
+            7,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.1,
+            "working": 0.8,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "farsouthwest",
+          "at": [
+            7,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.1,
+            "working": 0.8,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 840.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        }
+      ],
+      "tribes": [
+        {
+          "bands": [
+            "home",
+            "east",
+            "west",
+            "south",
+            "southeast",
+            "southwest",
+            "fareast_south",
+            "fareast",
+            "farwest",
+            "farsouthwest"
+          ]
+        }
+      ],
+      "labor": [
+        {
+          "assign_labor": {
+            "band": "home",
+            "role": "tile",
+            "workers": 80,
+            "take_species": [],
+            "move_with_herd": false,
+            "target_x": 13,
+            "target_y": 10,
+            "species": "food_stores"
+          }
+        }
+      ],
+      "roads": [],
+      "pens": [],
+      "bench": []
+    }
+  ],
+  "tiles": [
+    {
+      "at": [
+        13,
+        11
+      ],
+      "belief": 40.0
+    }
+  ],
+  "herds": [
+    {
+      "id": "boar_a",
+      "species": "boar",
+      "at": [
+        11,
+        10
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "fowl_a",
+      "species": "fowl",
+      "at": [
+        16,
+        11
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "sheep_a",
+      "species": "wild_sheep",
+      "at": [
+        11,
+        11
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "sheep_b",
+      "species": "wild_sheep",
+      "at": [
+        13,
+        15
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "rabbit_a",
+      "species": "rabbit",
+      "at": [
+        15,
+        15
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "fowl_b",
+      "species": "fowl",
+      "at": [
+        19,
+        11
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "boar_b",
+      "species": "boar",
+      "at": [
+        8,
+        13
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    }
+  ],
+  "deposits": []
+}

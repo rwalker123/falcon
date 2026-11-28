@@ -40,6 +40,7 @@
       "conservationism": 20.0,
       "quarrying": 20.0,
       "storage": 20.0,
+      "granaries": 20.0,
       "herd_lore": 20.0,
       "travois": 20.0,
       "drives": 20.0,
@@ -777,7 +778,7 @@
       "_comment_rung": "A STORAGE PIT (#708) - a lined hole in the ground a people dug, on ONE TILE. Placed and kept by a tile crew (`assign_labor <faction> <band> tile food_stores <x> <y> <n>`), gated on the `storage` lesson. Its payoff is a shelf life for the people's bands that camp within the supply network's reach of it (demographics_config.json keeping.preservation), and the pit is the people's, not the band's: any band of the faction near enough keeps its dry food longer. Work alone, like every tile rung (the tile kind settles no material). An unkept pit fills in after its grace. partial_credit on_completion: a half-dug pit stores nothing. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE - playtest dials.",
       "verb": "dig",
       "unlock_knowledge": "storage",
-      "earns_knowledge": null,
+      "earns_knowledge": "granaries",
       "requires_rung": "unstored",
       "ceiling_required": null,
       "site_requirement": null,
@@ -788,6 +789,39 @@
       },
       "upkeep": {
         "work_per_turn": 0.5,
+        "scaled_by": "source_load",
+        "meter_decay": {
+          "per_turn": 2.0
+        },
+        "grace_turns": 3
+      },
+      "partial_credit": "on_completion",
+      "behavior": {
+        "movement": "fixed"
+      }
+    },
+    {
+      "id": "granary",
+      "branch": "food_stores",
+      "order": 3,
+      "label": "Granary",
+      "label_fallback": "a granary",
+      "proposal_phrase": "build a granary",
+      "feed_channel": "extraction",
+      "_comment_rung": "A GRANARY (#176) - THE STORE BRANCH'S THIRD RUNG, ABOVE THE STORAGE PIT: a raised, roofed store a people builds on ONE TILE, a fixed store like the pit only bigger and longer-keeping (demographics_config.json keeping.fixed_stores / keeping.preservation). Practising the pit teaches the `granaries` lesson and the granary is gated on it, the ladder's practise-rung-N, unlock-rung-N+1 rule. It is the criterion a settlement's CITY stage reads (settlement_stage_config.json min_store_rung). Work alone, like every tile rung. An unkept granary falls back to a pit after its grace. partial_credit on_completion: a half-built granary stores nothing. OPENING VALUES CHOSEN FOR SHAPE, NOT BALANCE - playtest dials.",
+      "verb": "store",
+      "unlock_knowledge": "granaries",
+      "earns_knowledge": null,
+      "requires_rung": "storage_pit",
+      "ceiling_required": null,
+      "site_requirement": null,
+      "build": {
+        "work_cost": 120.0,
+        "max_builders": 4,
+        "grace_turns": null
+      },
+      "upkeep": {
+        "work_per_turn": 1.0,
         "scaled_by": "source_load",
         "meter_decay": {
           "per_turn": 2.0

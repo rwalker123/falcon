@@ -269,8 +269,8 @@ that today only changes a label or an icon now changes what the player manages.
 | Level | What it is | How it starts | Who leads it |
 |---|---|---|---|
 | **1. Band** | One band, as today | The band does enough work that needs an organiser (below) | a **chief** (Hierarchical) or an **elders' council** (Egalitarian) |
-| **2. Tribe** | Bands linked by the supply network — those within reach that already pool goods | The linked bands share a **gathering place** they walk to and work on | a **paramount chief** or a **council of chiefs** |
-| **3. City** | A settled cluster large enough to carry the *city* label (#176), still independent | Its first administered store — a granary and the rations drawn from it | a **ruler** or an **assembly** |
+| **2. Tribe** | Bands of one people that share a belief anchor and stay in touch | The linked bands share a **gathering place** they walk to and work on | a **paramount chief** or a **council of chiefs** |
+| **3. City** | A tribe (or a lone band) whose settlement stage reaches *city* (#176), still independent | The first turn it meets the city row — people, a granary, a food stock and belief | a **ruler** or an **assembly** |
 | **4. Nation** | Cities, tribes and bands united as one faction | Union by conquest or confederation (civilization steps 8–11, #695) | a **faction leader** — a king or a high council |
 
 - **Every people reaches every level.** Hierarchical or Egalitarian changes the kind of leader, not
@@ -324,9 +324,10 @@ The gathering place is the band's **belief anchor** — the urn on the map, the 
 the band has stood within reach of (`.claude/rules/core_sim/belief.md`). Deaths and gatherings both
 raise it.
 
-**The conditions.** Bands can only be a tribe when they are of one faction, linked in one supply
-network, and hold the same anchor — and at least one of them has a chief. Being linked is a
-condition, not a score: it is what "local" means.
+**The conditions.** Bands can only be a tribe when they are of one people, hold the same anchor,
+and keep a live tie both ways — and at least one of them has a chief. These are conditions, not a
+score: they are what "local" means. The supply network plays no part; the shared anchor is what
+keeps a tribe's bands close (`.claude/rules/core_sim/leadership.md` → "A tribe is earned").
 
 **The points bank.** How close two bands are is a bank of points, the way a chief's practice is. Each
 input reads 0 to 1 and carries a weight; the pair's **rate** is the sum, and a local pair with a
@@ -548,9 +549,9 @@ list every band. It is the same panel, rows and work strip, rolled up:
 
 **3. City orders — the ruler.**
 
-- **A city grows out of a tribe and replaces it**, the way a tribe replaced its bands: when the
-  tribe's bands settle into one cluster that carries the *city* label and it runs its first
-  administered store, the city takes the tribe's place in the band switcher, its bands one click down.
+- **A city grows out of a tribe and replaces it**, the way a tribe replaced its bands: on the
+  first turn the tribe's settlement stage reaches *city* — the city row includes a granary
+  (`docs/plan_settlement_population.md` → "Settlements — derived clusters, never founded") — the city takes the tribe's place in the band switcher, its bands one click down.
   A lone band can grow into a city the same way. **Inside a city a band is called a quarter**
   (*Greyfen quarter*, *3 quarters*) — the old word for a part of a city, each grown from the band that
   settled there.

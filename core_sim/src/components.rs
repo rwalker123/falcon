@@ -3197,20 +3197,6 @@ impl Expedition {
     }
 }
 
-/// Permanent settlement seeded by a founding action.
-#[derive(Component, Debug, Clone, Serialize, Deserialize)]
-pub struct Settlement {
-    pub faction: FactionId,
-    pub position: UVec2,
-}
-
-/// Anchor component for the initial hub within a settlement.
-#[derive(Component, Debug, Clone, Serialize, Deserialize)]
-pub struct TownCenter {
-    pub construction_radius: u32,
-    pub logistics_radius: u32,
-}
-
 /// Whole assignable workers a band's working-age bracket supplies this turn. Only *whole*
 /// people can be staffed onto a source, so this floors the fractional `working` Scalar (which
 /// otherwise carries sub-person demographic precision). The `Σ assignments ≤ available` invariant

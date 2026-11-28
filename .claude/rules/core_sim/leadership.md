@@ -39,7 +39,7 @@ stood.
 | A finished **Cultivate, Farm, Tame or Corral** build — the rungs flagged `directed_work` (`cultivate`, `sow`, `tame`, `corral`; not a road, felling, coppicing, quarrying, a pen's ring or a herd's output commitment) | the per-band completion seam in `advance_labor_allocation`, `BuildJob::Climb` only | `practice_per_directed_build` |
 | A **commanded band split** — to BOTH the parent and the new band | `split_band_from_parent` (`systems/fission.rs`), the wrapper the player's `split_band` verb runs. The breeding break-off and the independence break-away call `split_band_from_parent_with` directly and credit nothing: nobody ordered them | `practice_per_split`, each band, once |
 | **Hexes walked following a herd**, in any roam state, the catch-up walk included | `advance_leadership` reads `mobility::HerdFollowSteps::hexes_of` — the very measure the mobility score's distance input drains, filled by `advance_band_movement`. No recomputation and no ordering hack: `advance_leadership` is ordered after labor and `mobility_tick` has an explicit `.after(advance_leadership)`, so the steps are there when read and still there when drained. A plain move order records no steps | `practice_per_herd_hex` per hex |
-| A **settlement stage reached** — the first time a band stands in each stage above the first | `advance_leadership`, off the band's current size through `resolve_settlement_stage` and the stage's index in `settlement_stage_config.json`. `stages_paid` is the highest index already paid: a shrink and regrow does not repay, reaching two stages at once pays both, and the first stage is never paid | `practice_per_stage_reached` per stage |
+| A **settlement stage reached** — the first time a band stands in each stage above the first | `advance_leadership`, off the band's OWN stage (read over the band alone from its people, store rung, stored food and anchor belief: `campaign.md` -> "Settlements: derived clusters") and the stage's index in `settlement_stage_config.json`; it resolves the stage inline THIS turn through the same `settlement::read_bands` / `band_stage` that `advance_settlements` uses (not `SettlementStages`, which is written later in the turn), so a band that starts at 150 people is credited its two stages on the first turn; a band in a tribe has the tribe's leader so the tribe's stage feeds no credit. `stages_paid` is the highest index already paid: a shrink and regrow does not repay, reaching two stages at once pays both, and the first stage is never paid | `practice_per_stage_reached` per stage |
 
 A kill credits nothing. Which builds count is the rung flag `RungDef::directed_work` (config), so no
 seam tests which rung it is.
@@ -74,7 +74,7 @@ gets one — once, permanently.
 
 | File | Purpose |
 |---|---|
-| `src/data/leadership_config.json` (env `LEADERSHIP_CONFIG_PATH`; `leadership_config.rs`) | `practice_threshold` (10.0), `practice_per_directed_build` (3.0), `practice_per_split` (3.0), `practice_per_herd_hex` (1.0), `practice_per_stage_reached` (5.0); and the tribe levers `tribe_weight_origin` (3.0), `tribe_weight_likeness` (3.0), `tribe_weight_tie` (2.0), `tribe_weight_belief` (1.0), `tribe_weight_acting` (3.0), `tribe_weight_monument` (2.0), `tribe_points_fade_turns` (100.0), `tribe_score_threshold` (100.0); and the reach levers `reach_chief_people` (150.0), `reach_paramount_bands` (4.0), `over_reach_efficiency` (0.5); and the levy levers `levy_share_low` (0.25), `levy_share_normal` (0.5), `levy_share_high` (1.0), `tribe_acting_full_share` (0.2). Strict: every key required, unknown keys rejected; the practice levers, the fade turns, the threshold and the two reaches finite and `> 0`, the six weights finite and `>= 0`, `over_reach_efficiency` finite and in `(0, 1]`, the three levy shares `0 < low <= normal <= high <= 1`, `tribe_acting_full_share` in `(0, 1]`. All are Workbench levers (`ConfigOverrideKind::Leadership`, proto 11) |
+| `src/data/leadership_config.json` (env `LEADERSHIP_CONFIG_PATH`; `leadership_config.rs`) | `practice_threshold` (10.0), `practice_per_directed_build` (3.0), `practice_per_split` (3.0), `practice_per_herd_hex` (1.0), `practice_per_stage_reached` (5.0); and the tribe levers `tribe_weight_origin` (3.0), `tribe_weight_likeness` (3.0), `tribe_weight_tie` (2.0), `tribe_weight_belief` (1.0), `tribe_weight_acting` (3.0), `tribe_weight_settlement` (2.0), `tribe_weight_monument` (2.0), `tribe_weight_settlement` (2.0), `tribe_points_fade_turns` (100.0), `tribe_score_threshold` (100.0); and the reach levers `reach_chief_people` (150.0), `reach_paramount_bands` (4.0), `over_reach_efficiency` (0.5); and the levy levers `levy_share_low` (0.25), `levy_share_normal` (0.5), `levy_share_high` (1.0), `tribe_acting_full_share` (0.2). Strict: every key required, unknown keys rejected; the practice levers, the fade turns, the threshold and the two reaches finite and `> 0`, the seven weights finite and `>= 0`, `over_reach_efficiency` finite and in `(0, 1]`, the three levy shares `0 < low <= normal <= high <= 1`, `tribe_acting_full_share` in `(0, 1]`. All are Workbench levers (`ConfigOverrideKind::Leadership`, proto 11) |
 | `src/data/leader_names.json` (env `LEADER_NAMES_PATH`; `leader_names.rs`) | The leader-name pool — content, not tuning. A duplicate or empty pool is refused at load |
 | `intensification_ladder.json` → `rungs[].directed_work` | `true` on `cultivate`, `sow`, `tame` and `corral` |
 
@@ -205,7 +205,7 @@ alone is not a tribe: it has to be earned.
 **The points bank.** Every local pair has a bank of points (`TribeRegistry::points`, per pair,
 checkpoint state). Each turn a pair is local and at least one of its two bands has a leader
 (`BandLeadership.leader.is_some()`), the bank gains the pair's **rate** (`points_per_turn`, a pure
-function of `CloseInputs` and the config): the sum over six inputs, each in `[0, 1]`, of
+function of `CloseInputs` and the config): the sum over seven inputs, each in `[0, 1]`, of
 `weight x input`. The bank is clamped at `tribe_score_threshold` (100.0) and a pair is *close* when
 it holds that much. A local pair with no leader on either side holds its bank, so a pair that never
 had a chief stays at 0; nothing counts toward a tribe until a chief exists.
@@ -218,6 +218,7 @@ had a chief stays at 0; nothing counts toward a tribe until a chief exists.
 | Belief on the shared urn | `CultureConfig::anchor_weight(BeliefRegistry::get(anchor))`, the weight belief already uses (`belief / (belief + belief_half_saturation)`), at the pair's shared anchor | `tribe_weight_belief` 1.0 |
 | A kept monument on the shared urn | `kept_monument`: 1 while the anchor tile's `TileImprovementRegistry` entry HOLDS a rung `belief_config.json` -> `improvement_belief` lists (the shipped list is `belief:monument`, `belief.md`), else 0. The engine names no rung: the list that says which rungs add belief also says which make a monument. Held, not built: a half-raised monument (`partial_credit: on_completion`) reads 0, and an unkept one reads 0 the turn it decays to `gathering_ground` | `tribe_weight_monument` 2.0 |
 | Acting as a tribe | `acting_as_a_tribe(levy, tribe_acting_full_share)`: for a pair inside one tribe, `min(1, levied / (tribe_acting_full_share x pool))` ("A tribe levies its bands" below); 0 for any pair outside one tribe | `tribe_weight_acting` 3.0 |
+| Settlement pull | `settlement_pull`: the larger of the two bands' tribe stage readings (`SettlementStageConfig::pull_strength`: the stage's place on the ladder, `0` below `pull_from_stage` = village), read off `SettlementStages` as last turn resolved them; `0` for a band in no tribe. It only adds to the rate, so a pair still banks only while one side has a chief. A nearby band joins by the same bank as any member; bands of another people never reach a tribe | `tribe_weight_settlement` 2.0 |
 
 **Fading.** A pair that is not local (another urn, another people, or a lapsed or one-way tie) loses
 `tribe_score_threshold / tribe_points_fade_turns` points a turn (opening: 1 a turn, a full bank
@@ -287,7 +288,7 @@ migration, defection, independence and the culture splits.
 
 **On the wire.** Every own band's progress toward a tribe (a chiefless band can join one) rides
 `PopulationCohortState`, appended last: `tribeThreshold` (`tribe_score_threshold`), `tribeWeights` (a `TribeClosenessState`: the
-six weights, the most points per turn each input can add) and `tribePairs` (one `TribePairState` per local partner
+seven weights (`settlement` last), the most points per turn each input can add) and `tribePairs` (one `TribePairState` per local partner
 band of the band's people, partner id ascending: `partnerBand`, `partnerName`, `points`
 (the banked points, on the `tribeThreshold` scale), `contribution`, each input times its weight: its
 points per turn, summing to the pair's rate, and `partnerHasLeader`, whether the partner has a
@@ -449,3 +450,23 @@ by the time `finish_scenario` runs, so no test reaches that refusal.
 Export writes `leader: true` on a band that holds one and notes that its name and kind are derived again
 on load (the name from the band id, the kind from the culture axis then). A leaderless band with banked
 practice above zero is noted ("its leadership practice X of Y is not exported").
+
+### The `tribes` section
+
+`factions[].tribes` (`core_sim/src/scenario/tribes.rs`) is optional: `[{ "bands": ["home", "east", "south"] }]` founds each
+entry as one tribe at load, so a settlement scenario opens with its tribe instead of earning it over about
+eighteen turns. Each entry is founded in `finish_scenario` **after `apply_leaders` and before labor** through
+`tribe::found_scenario_tribe`, which runs `found_tribe`, the body `advance_tribes` forms a group with (id, name,
+the largest chiefed member's leader promoted, opening scouting range, `formed` count, the `TribeFormed` line).
+The load then **establishes** what the game would have to earn, so the next turn keeps the tribe (it does not
+refuse a file that lacks them): every member is set to one belief anchor (the strongest place of belief on the
+map, a `tiles[].belief` or the dead the build turn buried), every pair with a missing direction gets a full tie
+both ways, and every pair's points bank is set to `tribe_score_threshold`. The settlement stage is then
+resolved once (`advance_settlements`), so the world opens at its stage.
+
+| key | meaning | refused when |
+|---|---|---|
+| `tribes[].bands` | the member bands' scenario ids, all of this faction (a tribe is one people, so another people's band is "not a band of this faction") | fewer than `MIN_TRIBE_BANDS` (2) bands at `tribes[k].bands`; an id the faction does not declare; an id listed twice in one tribe or in two tribes; at apply time, no member with a leader (`leader: true`, or one the build turn emerged) at `tribes[k]`; no place of belief on the map |
+
+Export writes no tribes and notes "tribes are not exported".
+

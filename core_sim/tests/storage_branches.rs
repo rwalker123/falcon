@@ -1580,3 +1580,108 @@ fn every_hand_at_the_bench() -> core_sim::BenchOrder {
     };
     order
 }
+
+// ---------------------------------------------------------------------------------------------
+// The granary: the store branch's third rung (#176)
+// ---------------------------------------------------------------------------------------------
+
+/// The `granaries` lesson's discovery id (`start_profile_knowledge_tags.json`): the pit teaches it,
+/// the granary is gated on it.
+const GRANARIES_DISCOVERY_ID: u32 = 2026;
+/// What a granary holds, in food (`demographics_config.json` -> `keeping.fixed_stores`).
+const GRANARY_CAPACITY: f32 = 2_000.0;
+/// What a pit holds.
+const PIT_CAPACITY: f32 = 400.0;
+/// Turns of keeping the pit once it stands, enough for its practice to bank a visible share of the
+/// lesson.
+const PRACTICE_TURNS: usize = 10;
+
+fn granary() -> RungId {
+    RungId::new(food_stores(), "granary")
+}
+
+fn granary_progress(app: &App, faction: FactionId) -> f32 {
+    app.world
+        .resource::<DiscoveryProgressLedger>()
+        .progress
+        .get(&faction)
+        .and_then(|rows| rows.get(&GRANARIES_DISCOVERY_ID))
+        .map_or(0.0, |progress| progress.to_f32())
+}
+
+fn store_capacity(app: &App, rung: RungId) -> f32 {
+    let ladder = app.world.resource::<LadderConfigHandle>().get();
+    app.world
+        .resource::<DemographicsConfigHandle>()
+        .get()
+        .keeping
+        .store_spec(&ladder, rung)
+        .expect("the rung is a fixed store")
+        .capacity
+}
+
+/// **PRACTISING THE PIT TEACHES `granaries`, AND THE GRANARY IS BUILT ONLY ONCE IT IS KNOWN** - and
+/// what it holds is the granary's 2,000, not the pit's 400.
+#[test]
+fn a_kept_pit_teaches_granaries_and_the_granary_is_raised_above_it_and_holds_two_thousand() {
+    let mut app = campaign_world();
+    let (entity, faction, _, tile) = first_band(&mut app);
+    begin_the_pit(&mut app, entity, faction, tile);
+    learn_storage(&mut app, faction);
+    run_until(&mut app, "the pit being dug", |app| {
+        pit_rung_held(app, tile) == storage_pit()
+    });
+    assert_eq!(store_capacity(&app, storage_pit()), PIT_CAPACITY);
+
+    // Keeping the pit is practising it: the `granaries` lesson accrues.
+    let before = granary_progress(&app, faction);
+    for _ in 0..PRACTICE_TURNS {
+        app.update();
+    }
+    assert!(
+        granary_progress(&app, faction) > before,
+        "working the pit teaches granaries"
+    );
+
+    // Declare the granary above the held pit. Without the lesson it does not climb.
+    app.world
+        .get_mut::<LaborAllocation>(entity)
+        .expect("the band has an allocation")
+        .declare_build(
+            BuildSource::Tile {
+                tile,
+                branch: food_stores(),
+            },
+            BuildJob::Climb(granary()),
+        );
+    core_sim::seat_builders(&mut app.world, entity, BUILDERS);
+    // A band that would go hungry feeds itself before it builds: a full larder keeps the builders.
+    app.world
+        .get_mut::<PopulationCohort>(entity)
+        .expect("the band has a cohort")
+        .stores
+        .add_food("dry", scalar_from_f32(SURPLUS));
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .progress
+        .entry(faction)
+        .or_default()
+        .remove(&GRANARIES_DISCOVERY_ID);
+    for _ in 0..PRACTICE_TURNS {
+        app.update();
+    }
+    assert_eq!(
+        pit_rung_held(&app, tile),
+        storage_pit(),
+        "no granary without the lesson"
+    );
+
+    // With it, the granary is raised and the store is the bigger one.
+    app.world
+        .resource_mut::<DiscoveryProgressLedger>()
+        .add_progress(faction, GRANARIES_DISCOVERY_ID, scalar_one());
+    run_until(&mut app, "the granary being raised", |app| {
+        pit_rung_held(app, tile) == granary()
+    });
+    assert_eq!(store_capacity(&app, granary()), GRANARY_CAPACITY);
+}

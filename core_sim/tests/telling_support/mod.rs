@@ -86,6 +86,12 @@ pub fn spawn_world() -> App {
         .insert_resource(core_sim::GatheringLedger::default());
     app.world
         .insert_resource(core_sim::TribeRegistry::default());
+    app.world
+        .insert_resource(core_sim::SettlementStages::default());
+    app.world
+        .insert_resource(core_sim::SettlementStageConfigHandle::default());
+    app.world
+        .insert_resource(core_sim::DemographicsConfigHandle::default());
     app.world.insert_resource(BeatConfigHandle::default());
     app.world.insert_resource(BeatCatalogHandle::default());
     app.world.insert_resource(BeatLedger::default());

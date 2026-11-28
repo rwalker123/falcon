@@ -9071,7 +9071,7 @@
             }
           ],
           "max_workers": 81,
-          "move_with_herd": false,
+          "move_with_herd": true,
           "muster_crew": 189,
           "need_runway": 35.98,
           "net_rate_home": 11.27,
@@ -9212,13 +9212,13 @@
             }
           ],
           "max_workers": 42,
-          "move_with_herd": true,
+          "move_with_herd": false,
           "muster_crew": 134,
           "need_runway": 111.139999,
           "net_rate_home": 14.17,
           "next_load_home_in": 78,
           "order_kind": "populations[0].labor_assignments[1].order_kind",
-          "overdraws": false,
+          "overdraws": true,
           "pack_units": 59.689999,
           "party_workers": 148,
           "party_x": 173,
@@ -9353,13 +9353,13 @@
             }
           ],
           "max_workers": 87,
-          "move_with_herd": false,
+          "move_with_herd": true,
           "muster_crew": 7,
           "need_runway": 8.1,
           "net_rate_home": 20.030001,
           "next_load_home_in": 123,
           "order_kind": "populations[0].labor_assignments[2].order_kind",
-          "overdraws": true,
+          "overdraws": false,
           "pack_units": 81.650002,
           "party_workers": 1,
           "party_x": 60,
@@ -9814,6 +9814,7 @@
             "likeness": 18.549999,
             "monument": 36.25,
             "origin": 0.16,
+            "settlement": 82.080002,
             "tie": 68.889999
           },
           "partner_band": 188,
@@ -9828,6 +9829,7 @@
             "likeness": 66.989998,
             "monument": 12.86,
             "origin": 30.74,
+            "settlement": 0.14,
             "tie": 31.809999
           },
           "partner_band": 65,
@@ -9842,6 +9844,7 @@
             "likeness": 110.959999,
             "monument": 96.610001,
             "origin": 10.03,
+            "settlement": 84.669998,
             "tie": 103.519997
           },
           "partner_band": 6,
@@ -9850,6 +9853,10 @@
           "points": 44.889999
         }
       ],
+      "tribe_scouting_range": 35,
+      "tribe_settlement_stage_icon": "populations[0].tribe_settlement_stage.icon",
+      "tribe_settlement_stage_id": "populations[0].tribe_settlement_stage.id",
+      "tribe_settlement_stage_label": "populations[0].tribe_settlement_stage.label",
       "tribe_threshold": 15.5,
       "tribe_weights": {
         "acting": 61.549999,
@@ -9857,6 +9864,7 @@
         "likeness": 50.040001,
         "monument": 33.610001,
         "origin": 99.529999,
+        "settlement": 99.639999,
         "tie": 73.129997
       },
       "turns_of_fodder": 29.93,
@@ -12028,7 +12036,7 @@
             }
           ],
           "max_workers": 56,
-          "move_with_herd": false,
+          "move_with_herd": true,
           "muster_crew": 40,
           "need_runway": 100.650002,
           "net_rate_home": 99.919998,
@@ -12169,13 +12177,13 @@
             }
           ],
           "max_workers": 7,
-          "move_with_herd": true,
+          "move_with_herd": false,
           "muster_crew": 183,
           "need_runway": 65.220001,
           "net_rate_home": 72.489998,
           "next_load_home_in": 163,
           "order_kind": "populations[1].labor_assignments[1].order_kind",
-          "overdraws": false,
+          "overdraws": true,
           "pack_units": 21.01,
           "party_workers": 17,
           "party_x": 116,
@@ -12310,13 +12318,13 @@
             }
           ],
           "max_workers": 138,
-          "move_with_herd": false,
+          "move_with_herd": true,
           "muster_crew": 62,
           "need_runway": 62.32,
           "net_rate_home": 56.73,
           "next_load_home_in": 78,
           "order_kind": "populations[1].labor_assignments[2].order_kind",
-          "overdraws": true,
+          "overdraws": false,
           "pack_units": 84.910004,
           "party_workers": 84,
           "party_x": 5,
@@ -12698,6 +12706,7 @@
             "likeness": 66.139999,
             "monument": 75.629997,
             "origin": 59.810001,
+            "settlement": 80.610001,
             "tie": 63.02
           },
           "partner_band": 19,
@@ -12712,6 +12721,7 @@
             "likeness": 66.120003,
             "monument": 49.43,
             "origin": 101.25,
+            "settlement": 62.25,
             "tie": 83.779999
           },
           "partner_band": 174,
@@ -12726,6 +12736,7 @@
             "likeness": 9.25,
             "monument": 56.98,
             "origin": 36.66,
+            "settlement": 105.339996,
             "tie": 86.730003
           },
           "partner_band": 169,
@@ -12734,6 +12745,10 @@
           "points": 61.98
         }
       ],
+      "tribe_scouting_range": 90,
+      "tribe_settlement_stage_icon": "populations[1].tribe_settlement_stage.icon",
+      "tribe_settlement_stage_id": "populations[1].tribe_settlement_stage.id",
+      "tribe_settlement_stage_label": "populations[1].tribe_settlement_stage.label",
       "tribe_threshold": 90.18,
       "tribe_weights": {
         "acting": 7.69,
@@ -12741,6 +12756,7 @@
         "likeness": 46.0,
         "monument": 74.370003,
         "origin": 9.31,
+        "settlement": 20.09,
         "tie": 6.29
       },
       "turns_of_fodder": 8.24,
@@ -14929,7 +14945,7 @@
             }
           ],
           "max_workers": 39,
-          "move_with_herd": false,
+          "move_with_herd": true,
           "muster_crew": 31,
           "need_runway": 71.0,
           "net_rate_home": 19.51,
@@ -15070,13 +15086,13 @@
             }
           ],
           "max_workers": 16,
-          "move_with_herd": true,
+          "move_with_herd": false,
           "muster_crew": 56,
           "need_runway": 81.589996,
           "net_rate_home": 24.16,
           "next_load_home_in": 148,
           "order_kind": "populations[2].labor_assignments[1].order_kind",
-          "overdraws": false,
+          "overdraws": true,
           "pack_units": 69.160004,
           "party_workers": 94,
           "party_x": 199,
@@ -15211,13 +15227,13 @@
             }
           ],
           "max_workers": 193,
-          "move_with_herd": false,
+          "move_with_herd": true,
           "muster_crew": 77,
           "need_runway": 102.699997,
           "net_rate_home": 3.01,
           "next_load_home_in": 109,
           "order_kind": "populations[2].labor_assignments[2].order_kind",
-          "overdraws": true,
+          "overdraws": false,
           "pack_units": 15.84,
           "party_workers": 151,
           "party_x": 34,
@@ -15672,6 +15688,7 @@
             "likeness": 95.370003,
             "monument": 93.959999,
             "origin": 55.48,
+            "settlement": 69.160004,
             "tie": 106.269997
           },
           "partner_band": 182,
@@ -15686,6 +15703,7 @@
             "likeness": 54.610001,
             "monument": 96.360001,
             "origin": 64.0,
+            "settlement": 61.16,
             "tie": 25.049999
           },
           "partner_band": 155,
@@ -15700,6 +15718,7 @@
             "likeness": 2.82,
             "monument": 35.709999,
             "origin": 106.889999,
+            "settlement": 38.630001,
             "tie": 99.779999
           },
           "partner_band": 84,
@@ -15708,6 +15727,10 @@
           "points": 1.93
         }
       ],
+      "tribe_scouting_range": 133,
+      "tribe_settlement_stage_icon": "populations[2].tribe_settlement_stage.icon",
+      "tribe_settlement_stage_id": "populations[2].tribe_settlement_stage.id",
+      "tribe_settlement_stage_label": "populations[2].tribe_settlement_stage.label",
       "tribe_threshold": 52.619999,
       "tribe_weights": {
         "acting": 106.690002,
@@ -15715,6 +15738,7 @@
         "likeness": 47.459999,
         "monument": 43.59,
         "origin": 50.43,
+        "settlement": 109.089996,
         "tie": 79.82
       },
       "turns_of_fodder": 108.470001,
@@ -16083,7 +16107,6 @@
       "land_points": 53.099998,
       "population_points": 88.410004,
       "score": 80.769997,
-      "stage": "sedentarization[0].stage",
       "surplus_points": 16.74
     },
     {
@@ -16093,7 +16116,6 @@
       "land_points": 95.290001,
       "population_points": 23.690001,
       "score": 26.860001,
-      "stage": "sedentarization[1].stage",
       "surplus_points": 54.009998
     },
     {
@@ -16103,7 +16125,6 @@
       "land_points": 94.809998,
       "population_points": 76.260002,
       "score": 31.299999,
-      "stage": "sedentarization[2].stage",
       "surplus_points": 17.450001
     }
   ],

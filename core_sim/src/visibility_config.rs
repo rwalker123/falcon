@@ -75,13 +75,6 @@ fn default_sight_ranges() -> HashMap<String, SightRangeConfig> {
         },
     );
     ranges.insert(
-        "TownCenter".to_string(),
-        SightRangeConfig {
-            base_range: 5,
-            elevation_bonus_factor: 1.0,
-        },
-    );
-    ranges.insert(
         "Camp".to_string(),
         SightRangeConfig {
             base_range: 3,

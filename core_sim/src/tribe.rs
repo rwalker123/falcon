@@ -2,9 +2,9 @@
 //! belief-anchor tile, and a live connection tie in BOTH directions -- far kin in touch are local,
 //! the supply network plays no part) has a **points bank**. While the pair is
 //! local and at least one of the two bands has a leader, the bank fills each turn by the pair's
-//! **rate**: the weighted sum of six inputs in `[0, 1]` ([`CloseInputs`], [`points_per_turn`]) --
+//! **rate**: the weighted sum of seven inputs in `[0, 1]` ([`CloseInputs`], [`points_per_turn`]) --
 //! shared origin, culture likeness, the connection tie, belief on the shared urn, a kept monument on
-//! it, and acting as a tribe. With no leader on either side the bank holds, so nothing counts toward
+//! it, acting as a tribe, and the pull of a settlement (a tribe at village stage or above). With no leader on either side the bank holds, so nothing counts toward
 //! a tribe before a leader exists. A bank fades while the pair is not local. A pair is *close* when
 //! its bank reaches `leadership_config.json -> tribe_score_threshold`. A tribe-candidate is a
 //! connected component of close pairs within one (people, anchor) set, of [`MIN_TRIBE_BANDS`] or more
@@ -24,13 +24,15 @@ use crate::{
     belief_config::{BeliefConfig, BeliefConfigHandle},
     components::{BandId, BandName, PopulationCohort, ResidentBand},
     components::{LaborAllocation, SourcePriority},
-    connections::ConnectionLedger,
+    connections::{ConnectionKey, ConnectionLedger, Sighting},
     culture::{max_axis_gap, CultureLayer, CultureManager, CultureOwner, CULTURE_TRAIT_SPAN},
     ladder_ids::{BranchId, RungId},
     leadership::{BandLeader, BandLeadership, LeaderKind},
     leadership_config::{LeadershipConfig, LeadershipConfigHandle},
     orders::FactionId,
     resources::{CommandEventEntry, CommandEventKind, CommandEventLog, SimulationTick},
+    settlement::SettlementStages,
+    settlement_stage_config::{SettlementStageConfig, SettlementStageConfigHandle},
     systems::band_label,
     tile_improvement::TileImprovementRegistry,
     wellbeing_config::WellbeingConfigHandle,
@@ -471,7 +473,7 @@ pub fn likeness(a: &CultureLayer, b: &CultureLayer) -> f64 {
     f64::from((1.0 - gap / CULTURE_AXIS_RANGE).clamp(0.0, 1.0))
 }
 
-/// The six inputs to a pair's points rate, each in `[0, 1]`.
+/// The seven inputs to a pair's points rate, each in `[0, 1]`.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub struct CloseInputs {
     /// 1 when the two bands' founding lines share an origin band, else 0.
@@ -486,6 +488,10 @@ pub struct CloseInputs {
     pub monument: f64,
     /// [`acting_as_a_tribe`].
     pub acting: f64,
+    /// The pull of a settlement: the larger of the two bands' tribe stage readings
+    /// ([`SettlementStageConfig::pull_strength`]), 0 for a band in no tribe or one below the pull
+    /// stage.
+    pub settlement: f64,
 }
 
 /// **A pair's points per turn**: the weighted sum of its inputs. The one pure place the weights are
@@ -497,6 +503,7 @@ pub fn points_per_turn(config: &LeadershipConfig, inputs: &CloseInputs) -> f64 {
         + config.tribe_weight_belief * inputs.belief
         + config.tribe_weight_monument * inputs.monument
         + config.tribe_weight_acting * inputs.acting
+        + config.tribe_weight_settlement * inputs.settlement
 }
 
 /// What a tribe levied this turn against what it could have: the heads on its levy rows and its
@@ -505,6 +512,26 @@ pub fn points_per_turn(config: &LeadershipConfig, inputs: &CloseInputs) -> f64 {
 pub struct TribeLevyReading {
     pub levied: u32,
     pub pool: u32,
+}
+
+/// **The pull of a settlement on a pair** ([`CloseInputs::settlement`]): the larger of the two
+/// bands' tribe-stage readings ([`SettlementStageConfig::pull_strength`], `0` below the pull stage),
+/// `0` for a band in no tribe. Read off last turn's resolved stages. It only enters the rate, and a
+/// pair banks only while one side has a leader, so it never starts a tribe on its own.
+fn settlement_pull(
+    registry: &TribeRegistry,
+    settlements: &SettlementStages,
+    config: &SettlementStageConfig,
+    a: BandId,
+    b: BandId,
+) -> f64 {
+    let pull = |band: BandId| {
+        registry
+            .tribe_of(band)
+            .and_then(|tribe| settlements.of_tribe(tribe.id))
+            .map_or(0.0, |stage| config.pull_strength(stage))
+    };
+    pull(a).max(pull(b))
 }
 
 /// The reading of "acting as a tribe" a pair earns from the levy its tribe raised, in `[0, 1]`:
@@ -711,6 +738,8 @@ pub fn advance_tribes(
     belief_config: Res<BeliefConfigHandle>,
     improvements: Res<TileImprovementRegistry>,
     wellbeing: Res<WellbeingConfigHandle>,
+    stage_config: Res<SettlementStageConfigHandle>,
+    settlements: Res<SettlementStages>,
     mut registry: ResMut<TribeRegistry>,
     mut event_log: ResMut<CommandEventLog>,
     bands: Query<TribeBandParts, With<ResidentBand>>,
@@ -719,6 +748,7 @@ pub fn advance_tribes(
     let config = config.get();
     let wellbeing = wellbeing.get();
     let belief_config = belief_config.get();
+    let stage_config = stage_config.get();
     let mut facts: BTreeMap<BandId, BandFacts> = BTreeMap::new();
     let mut rows = Vec::new();
     for (_entity, band, cohort, name, leadership, allocation) in bands.iter() {
@@ -816,6 +846,7 @@ pub fn advance_tribes(
                 inputs.belief = urn_belief;
                 inputs.monument = monument;
                 inputs.acting = acting_as_a_tribe(same_tribe, config.tribe_acting_full_share);
+                inputs.settlement = settlement_pull(&registry, &settlements, &stage_config, *a, *b);
                 scores.insert((*a, *b), inputs);
             }
         }
@@ -932,48 +963,169 @@ pub fn advance_tribes(
         if claimed.contains(&index) {
             continue;
         }
-        let Some(largest) = largest_band(group.members.iter(), &facts) else {
-            continue;
-        };
-        let Some((leader_band, leader)) = largest_chiefed(group.members.iter(), &facts) else {
-            continue;
-        };
-        let id = registry.allocate();
-        let tribe = Tribe {
-            id,
-            faction: group.faction,
-            name: format!("{} tribe", facts[&largest].name),
-            members: group.members.clone(),
-            leader: TribeLeader::promote(leader_band, leader, turn),
-            since_turn: turn,
-            works: Vec::new(),
-            levy: LevyCeiling::default(),
-            // The tribe opens at the largest range any member already scouts.
-            scouting_range: group
-                .members
-                .iter()
-                .filter_map(|member| facts.get(member))
-                .map(|f| f.scouting_range)
-                .max()
-                .unwrap_or(0),
-            carriers: Vec::new(),
-        };
-        *registry.formed.entry(group.faction).or_insert(0) += 1;
-        event_log.push(tribe_entry(
+        found_tribe(
+            &mut registry,
+            &mut event_log,
             turn,
-            CommandEventKind::TribeFormed,
-            &tribe,
-            largest,
-            tribe_formed_label(&tribe),
-            format!(
-                "tribe={} kind={} leader={}",
-                tribe.id.0,
-                tribe.leader.kind.as_str(),
-                tribe.leader.name
-            ),
-        ));
-        registry.tribes.insert(id, tribe);
+            group.faction,
+            &group.members,
+            &facts,
+        );
     }
+}
+
+/// **Found one tribe of `members`**, the one body both a group's formation in [`advance_tribes`]
+/// and a scenario's `tribes` entry run: the id, the name (the largest member's, then "tribe"), the
+/// leader (the largest chiefed member's, promoted), the opening scouting range, the `formed` count
+/// and the `TribeFormed` feed line. `None` when no member is resident or none is chiefed.
+fn found_tribe(
+    registry: &mut TribeRegistry,
+    event_log: &mut CommandEventLog,
+    turn: u64,
+    faction: FactionId,
+    members: &BTreeSet<BandId>,
+    facts: &BTreeMap<BandId, BandFacts>,
+) -> Option<TribeId> {
+    let largest = largest_band(members.iter(), facts)?;
+    let (leader_band, leader) = largest_chiefed(members.iter(), facts)?;
+    let id = registry.allocate();
+    let tribe = Tribe {
+        id,
+        faction,
+        name: format!("{} tribe", facts[&largest].name),
+        members: members.clone(),
+        leader: TribeLeader::promote(leader_band, leader, turn),
+        since_turn: turn,
+        works: Vec::new(),
+        levy: LevyCeiling::default(),
+        // The tribe opens at the largest range any member already scouts.
+        scouting_range: members
+            .iter()
+            .filter_map(|member| facts.get(member))
+            .map(|f| f.scouting_range)
+            .max()
+            .unwrap_or(0),
+        carriers: Vec::new(),
+    };
+    *registry.formed.entry(faction).or_insert(0) += 1;
+    event_log.push(tribe_entry(
+        turn,
+        CommandEventKind::TribeFormed,
+        &tribe,
+        largest,
+        tribe_formed_label(&tribe),
+        format!(
+            "tribe={} kind={} leader={}",
+            tribe.id.0,
+            tribe.leader.kind.as_str(),
+            tribe.leader.name
+        ),
+    ));
+    registry.tribes.insert(id, tribe);
+    Some(id)
+}
+
+/// **A scenario's tribe**: found one tribe of `members` (resident bands of `faction`, at least one
+/// with a leader of its own) through [`found_tribe`], and make true what the game would have to
+/// earn first, so the next [`advance_tribes`] keeps it rather than dissolving it:
+///
+/// - every member holds the one belief anchor `anchor` (the locality check buckets by anchor);
+/// - every pair holds a live tie both ways (a missing direction is inserted at the full tie, as a
+///   long acquaintance would leave it);
+/// - every pair's points bank is full, so the pair is close and the tribe is one component.
+///
+/// `Err` is the refusal's text.
+pub fn found_scenario_tribe(
+    world: &mut World,
+    faction: FactionId,
+    members: &BTreeSet<BandId>,
+    anchor: UVec2,
+) -> Result<TribeId, String> {
+    let turn = world.resource::<SimulationTick>().0;
+    let threshold = world
+        .resource::<LeadershipConfigHandle>()
+        .get()
+        .tribe_score_threshold;
+    let mut facts: BTreeMap<BandId, BandFacts> = BTreeMap::new();
+    let mut entities: Vec<Entity> = Vec::new();
+    let mut query = world.query_filtered::<TribeBandParts, With<ResidentBand>>();
+    for (entity, band, cohort, name, leadership, allocation) in query.iter(world) {
+        if !members.contains(band) {
+            continue;
+        }
+        if cohort.faction != faction {
+            return Err(format!("band {} is not of this people", band.0));
+        }
+        entities.push(entity);
+        facts.insert(
+            *band,
+            BandFacts {
+                size: cohort.size,
+                name: name
+                    .map(|n| n.0.clone())
+                    .unwrap_or_else(|| band_label(*band)),
+                anchor: Some(anchor),
+                origins: BTreeSet::new(),
+                leader: leadership.and_then(|l| l.leader.clone()),
+                levy_heads: 0,
+                scout_heads: 0,
+                pool: 0,
+                scouting_range: allocation.map_or(0, |a| a.scouting_range_tiles()),
+            },
+        );
+    }
+    if facts.len() != members.len() {
+        return Err("a member is not a resident band".to_string());
+    }
+    if largest_chiefed(members.iter(), &facts).is_none() {
+        return Err(
+            "no member has a leader, and a tribe needs a chief (give a band `leader: true`)"
+                .to_string(),
+        );
+    }
+    for entity in entities {
+        if let Some(mut cohort) = world.get_mut::<PopulationCohort>(entity) {
+            cohort.belief_anchor = Some(anchor);
+        }
+    }
+    let ids: Vec<BandId> = members.iter().copied().collect();
+    {
+        let mut ledger = world.resource_mut::<ConnectionLedger>();
+        for (i, a) in ids.iter().enumerate() {
+            for b in &ids[i + 1..] {
+                if ledger.tied_both_ways(*a, *b) {
+                    continue;
+                }
+                for (observer, subject) in [(*a, *b), (*b, *a)] {
+                    let sighting =
+                        Sighting::new(UVec2::ZERO, turn, facts[&subject].name.clone(), faction);
+                    ledger.insert_full_tie(ConnectionKey::new(observer, subject), &sighting, turn);
+                }
+            }
+        }
+    }
+    let mut event_log = world
+        .remove_resource::<CommandEventLog>()
+        .expect("the command event log");
+    let mut registry = world
+        .remove_resource::<TribeRegistry>()
+        .expect("the tribe registry");
+    let found = found_tribe(
+        &mut registry,
+        &mut event_log,
+        turn,
+        faction,
+        members,
+        &facts,
+    );
+    for (i, a) in ids.iter().enumerate() {
+        for b in &ids[i + 1..] {
+            registry.points.insert(band_pair(*a, *b), threshold);
+        }
+    }
+    world.insert_resource(registry);
+    world.insert_resource(event_log);
+    found.ok_or_else(|| "the tribe could not be founded".to_string())
 }
 
 #[cfg(test)]
@@ -1119,6 +1271,7 @@ mod tests {
             belief,
             monument: 0.0,
             acting: 0.0,
+            settlement: 0.0,
         }
     }
 

@@ -37,7 +37,7 @@ static func event_dock_fixture() -> Array:
 		{"tick": 42, "kind": "forage", "faction": 0, "label": "Foragers returned with 9 provisions", "detail": "", "seq": 1},
 		{"tick": 42, "kind": "tame", "faction": 0, "label": "The aurochs herd has grown tame", "detail": "", "seq": 2},
 		{"tick": 43, "kind": "born", "faction": 0, "label": "A child was born in Windhollow", "detail": "count=1", "seq": 3},
-		{"tick": 43, "kind": "found_settlement", "faction": 0, "label": "Windhollow was settled", "detail": "", "seq": 4},
+		{"tick": 43, "kind": "settlement_stage_reached", "faction": 0, "label": "Windhollow became a village", "detail": "", "seq": 4},
 		{"tick": 44, "kind": "scout", "faction": 0, "label": "Two workers sent to scout the northern ridge", "detail": "", "seq": 5},
 		{"tick": 44, "kind": "came_of_age", "faction": 0, "label": "A child came of age in Windhollow", "detail": "count=1", "seq": 6},
 		{"tick": 44, "kind": "campaign_milestone", "faction": 0, "label": "Ashfoot has become a hamlet", "detail": "", "seq": 7},

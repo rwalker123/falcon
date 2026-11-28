@@ -809,36 +809,21 @@ static func idle_card_reason(idle_by_band: Array) -> String:
 ## A head names the section and the row states the reading, and a block with one row is still a block;
 ## the height it costs is absorbed by the band zone's scroll (see the zone builder).
 ##
-## **THE ROW IS KEYED BY THE STAGE**, not by a word restating the head above it: `SETTLING` over
-## `Sedentarization` would be a row with no information in its left column, and the stage is the one
-## fact the meter does not already carry. A faction the sim reports no stage for reads `Nomadic`,
-## which is what a score below the first threshold means. Returns null when the snapshot has carried
-## no sedentarization at all — never a `0/100` meter, which claims a measurement that was not made.
-##
-## **THE STAGE ARRIVES AS A WIRE TOKEN AND IS MAPPED THROUGH A TABLE.** `SedentarizationStage::as_str()`
-## spells it `none` / `soft` / `hard`, which is a database value and not a word anyone should see —
-## it rendered as a lowercase enum key beside the capitalised `Nomadic` the empty case already got.
-## `HudWorkVocab.FACTION_SETTLING_STAGE_LABELS` is the one home for those words, and an unknown or
-## absent stage falls back to the `none` row rather than passing the raw token through.
+## The row is keyed `Pull to settle` and valued by the meter (score out of 100). The meter is a readout
+## only: no stage or threshold label rides on it, since a settlement's stage is resolved each turn from
+## people, store rung, stored food and belief (`settlement_stage_*`). Returns null when the snapshot has
+## carried no sedentarization at all — never a `0/100` meter, which claims a measurement not made.
 static func _build_settling_block(sedentarization: Dictionary, mobility: Dictionary) -> VBoxContainer:
     if sedentarization.is_empty():
         return null
     var score := float(sedentarization.get("score", 0.0))
-    var token := String(sedentarization.get("stage", "")).strip_edges()
-    # `none` is the sim's own spelling of "no stage reached" and an absent `stage` is the same answer,
-    # normalized here through the ONE const both surfaces share rather than a second spelling of the
-    # wire value. Anything this build does not recognise falls through the table to the same word.
-    if token == "":
-        token = FactionReadouts.SEDENTARIZATION_STAGE_NONE
-    var stage := String(HudWorkVocab.FACTION_SETTLING_STAGE_LABELS.get(
-        token, HudWorkVocab.FACTION_SETTLING_NOMADIC))
     var block := HudWidgets.make_zone_block()
     block.add_child(HudWidgets.zone_head(HudWorkVocab.FACTION_HEADER_SETTLING, ""))
     # **`HudFormat.meter_bar` TAKES A 0–100 SCORE, NOT A FRACTION**, and sedentarization is already on
     # that scale — so the score goes in RAW and `FACTION_SETTLING_SCALE` names only what the `62/100`
     # beside the bar is out of. A fraction here fills zero cells at every score below 50, which is
     # exactly how the knowledge block below shipped its bars empty.
-    block.add_child(_stat_row(stage,
+    block.add_child(_stat_row(HudWorkVocab.FACTION_SETTLING_SCORE_KEY,
         HudWorkVocab.FACTION_SETTLING_VALUE_FORMAT % [
             HudFormat.meter_bar(score, KNOWLEDGE_METER_CELLS),
             int(round(score)), HudWorkVocab.FACTION_SETTLING_SCALE],

@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 61] = [
+const SIM_STATE_RESOURCES: [&str; 62] = [
     "ActiveCrisisLedger",
     // Belief on every place. Only ever grows and outlives the bands whose dead put it there, so
     // nothing rebuilds it — the roads' reason exactly.
@@ -66,6 +66,9 @@ const SIM_STATE_RESOURCES: [&str; 61] = [
     // Every tribe: identity, members, name and the leader fixed at formation, plus the cumulative
     // formation count the Telling diffs. Nothing rebuilds a leader once chosen.
     "TribeRegistry",
+    // Every settlement's stage: the stage-reached event's edge gate, and published by the capture
+    // before a restored world has run a turn.
+    "SettlementStages",
     "CorruptionLedgers",
     // Splits: `exposures_this_turn` is cleared per turn (derived), `exposures_total` is a
     // cumulative counter (state). Carried whole because the cheap half is small.
@@ -418,7 +421,7 @@ const CONFIG_RESOURCES_CONT: [&str; 33] = [
 /// Component state on entities. Omitting one of these is exactly the failure `PowerNode`'s missing
 /// `base_generation` / `base_demand` already is, which is why this table exists alongside the
 /// resource one: a resource-only guard would have missed the bug that motivated the guard.
-const SIM_STATE_COMPONENTS: [&str; 19] = [
+const SIM_STATE_COMPONENTS: [&str; 17] = [
     "Tile",
     // A band's durable identity — the thing `Entity` could not be across a restore.
     "BandId",
@@ -460,8 +463,6 @@ const SIM_STATE_COMPONENTS: [&str; 19] = [
     "ResidentBand",
     // How `resolve_starting_unit_entity` finds a band for a client command.
     "StartingUnit",
-    "Settlement",
-    "TownCenter",
     // Worldgen tile tags. Restore does not respawn them today, which is why a restored world
     // reports `forage_patches[].per_worker_yield == 0`.
     "FoodModuleTag",
@@ -748,7 +749,7 @@ fn every_band_has_a_unique_durable_id() {
 #[test]
 fn capture_sees_every_sim_state_entity() {
     use core_sim::sim_state::capture_sim_state;
-    use core_sim::{BandId, PopulationCohort, PowerNode, Settlement, Tile};
+    use core_sim::{BandId, PopulationCohort, PowerNode, Tile};
 
     let mut app = build_test_app();
     run_turn(&mut app);
@@ -760,17 +761,11 @@ fn capture_sees_every_sim_state_entity() {
         .query::<(&PopulationCohort, &BandId)>()
         .iter(&app.world)
         .count();
-    let settlements = app.world.query::<&Settlement>().iter(&app.world).count();
 
     let state = capture_sim_state(&app.world);
 
     assert_eq!(state.tiles.len(), tiles, "captured tile count");
     assert_eq!(state.bands.len(), bands, "captured band count");
-    assert_eq!(
-        state.settlements.len(),
-        settlements,
-        "captured settlement count"
-    );
     assert_eq!(
         state.tiles.iter().filter(|t| t.power.is_some()).count(),
         powered,

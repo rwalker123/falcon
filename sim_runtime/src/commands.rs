@@ -194,11 +194,6 @@ pub enum CommandPayload {
         policy: Option<String>,
         band_id: Option<u64>,
     },
-    FoundSettlement {
-        faction_id: u32,
-        target_x: u32,
-        target_y: u32,
-    },
     ForageTile {
         faction_id: u32,
         target_x: u32,
@@ -2255,15 +2250,6 @@ impl CommandEnvelope {
                 policy: policy.clone(),
                 band_id: *band_id,
             }),
-            CommandPayload::FoundSettlement {
-                faction_id,
-                target_x,
-                target_y,
-            } => pb::command_envelope::Command::FoundSettlement(pb::FoundSettlementCommand {
-                faction_id: *faction_id,
-                target_x: *target_x,
-                target_y: *target_y,
-            }),
             CommandPayload::ForageTile {
                 faction_id,
                 target_x,
@@ -3220,13 +3206,6 @@ impl CommandEnvelope {
                 policy: cmd.policy,
                 band_id: cmd.band_id,
             },
-            pb::command_envelope::Command::FoundSettlement(cmd) => {
-                CommandPayload::FoundSettlement {
-                    faction_id: cmd.faction_id,
-                    target_x: cmd.target_x,
-                    target_y: cmd.target_y,
-                }
-            }
             pb::command_envelope::Command::ForageTile(cmd) => CommandPayload::ForageTile {
                 faction_id: cmd.faction_id,
                 target_x: cmd.target_x,

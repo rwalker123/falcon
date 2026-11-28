@@ -826,7 +826,6 @@ about the world rather than about a people:
 | Reader | Asks | Why |
 |---|---|---|
 | `snapshot/capture.rs` | `position_for(viewer_faction.0)` | a frame is captured for one viewer, so the wire's single `StartMarkerState` carries **that viewer's** opening ground. The `.fbs` is unchanged — there is no per-faction marker table |
-| `bin/server.rs` `found_settlement` | `relocate(faction, target)` | only the **founding** faction's marker moves. It used to move the one global marker with no faction check, which on a two-faction map is a rival re-homing your start |
 | `fauna.rs` `spawn_initial_herds` | `anchor_position()` | the migratory-herd anchor is a property of the **map**, not of a people: long-range herds range across the whole world |
 | the worldgen suites (`food_site_water_bias`, `graze_distribution`) | `anchor_position()` | they assert about the terrain, and have no faction to ask with |
 
@@ -1064,11 +1063,10 @@ leave the append-only delta unable to tell two of them apart.
 ### The redaction is an ALLOW-LIST, not a set of deletions
 
 **`settlement_stage` is on the list because the client draws the marker from it** (id/label/icon);
-left at default, foreign bands render as a gray box. It is safe **only while the stage is a pure
-function of `size`** (`SettlementStageInputs` carries nothing else), and `size` is already published,
-so it discloses nothing new. It is resolved from `cohort.size` through the same helper the owner's row
-uses, never copied from a full row. If the stage ever gains a criterion beyond size (improvements, …),
-it must leave the redacted row.
+left at default, foreign bands render as a gray box. The owner's stage reads store, food and belief
+as well as people, so the redacted row does NOT copy it: it publishes the stage the band's **people
+alone** reach (`SettlementStageConfig::people_only_index(cohort.size)`), and `size` is already
+published, so it discloses nothing new. A foreign town or city reads as a village.
 
 `redacted_population_state` names seven fields and takes **everything else from `Default`**. A row
 built the other way round — full, then blanked — fails open on exactly the field nobody thought

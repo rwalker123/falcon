@@ -25,7 +25,7 @@ use crate::resources::TileRegistry;
 use crate::{terrain_definition, BiomeNiche};
 
 /// One tile the file overrides.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TileOverride {
     /// The tile, `[x, y]`.
@@ -38,6 +38,11 @@ pub struct TileOverride {
     /// basket.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flora: Option<Vec<String>>,
+    /// Belief standing on the tile at load, in dead-equivalents (`belief.md`), added through the one
+    /// [`crate::BeliefRegistry::add`] seam in `finish_scenario`. A playtest setter: it stands in for
+    /// the dead a long game would have buried there. Absent adds none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub belief: Option<f32>,
 }
 
 impl TileOverride {
@@ -117,11 +122,19 @@ pub(super) fn check(
                 format!("tile ({x},{y}) is listed twice"),
             ));
         }
-        if entry.terrain.is_none() && entry.flora.is_none() {
+        if entry.terrain.is_none() && entry.flora.is_none() && entry.belief.is_none() {
             refusals.push(ScenarioRefusal::new(
                 &at,
-                "name a terrain, a flora basket or both: an entry with neither changes nothing",
+                "name a terrain, a flora basket, a belief or any of them: an entry with none changes nothing",
             ));
+        }
+        if let Some(belief) = entry.belief {
+            if !belief.is_finite() || belief <= crate::NO_BELIEF {
+                refusals.push(ScenarioRefusal::new(
+                    format!("{at}.belief"),
+                    "belief must be a finite amount above zero: belief only ever accrues",
+                ));
+            }
         }
         if let Some(name) = &entry.terrain {
             match parse_terrain(name) {

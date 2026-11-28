@@ -794,3 +794,12 @@ the client's opinion of every people, and named both sections in `changed_sectio
 path therefore merges part by part over the held dict (`goodwill_delta_dict` / `treaties_delta_dict` in
 `dict/dealings.rs`): `None` when no part rode the delta, otherwise the held dict with exactly the parts that
 did ride replaced. `decode_guard`'s diplomacy witnesses found it.
+
+## Settlement stage and tribe closeness (#176)
+
+`dict/population.rs` decodes `PopulationCohortState.tribeSettlementStage` as
+`tribe_settlement_stage_id` / `_label` / `_icon` (empty in no tribe, for a foreign band and for a party)
+beside the band's own `settlement_stage_*`, and `TribeClosenessState.settlement` as the `settlement` key
+of `tribe_weights` and each pair's `contribution` (`HudFormat.TRIBE_INPUT_KEYS` sums it into a pair's
+rate). `dict/subsistence.rs` no longer emits `stage` on a sedentarization entry. The Workbench manifest
+carries `/tribe_weight_settlement` as `Living by a settlement` (default 2.0).

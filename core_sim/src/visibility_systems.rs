@@ -44,7 +44,7 @@ use sim_runtime::TerrainTags;
 use crate::{
     components::{
         BandEquipment, BandId, BandName, Expedition, LaborAllocation, LaborTarget,
-        PopulationCohort, ResidentBand, Settlement, StartingUnit, Tile, TownCenter,
+        PopulationCohort, ResidentBand, StartingUnit, Tile,
     },
     connections::{ContactsThisTurn, Sighting},
     equipment_config::EquipmentConfigHandle,
@@ -331,8 +331,6 @@ pub fn calculate_visibility(
     // is ground revealed for the first time, and this is the only pass that knows which tiles those
     // were. The charge is a second pass at the bottom, after the reveals have been counted.
     mut cohorts: VisionCohorts,
-    // Settlements with TownCenter
-    settlements: Query<(&Settlement, &TownCenter)>,
     // **The subjects of contact** — every resident band and where it stands. Read-only and disjoint
     // from `cohorts`' `&mut BandEquipment`, so the two queries coexist. See `resident_band_occupancy`.
     residents: Query<(&BandId, &PopulationCohort, Option<&BandName>), With<ResidentBand>>,
@@ -399,7 +397,6 @@ pub fn calculate_visibility(
     // Collect all visibility sources — see `VisionSource` for what each field is.
     let mut sources: Vec<VisionSource> = Vec::new();
     let mut cohort_count = 0u32;
-    let mut settlement_count = 0u32;
 
     // Units (population cohorts with StartingUnit marker)
     for (entity, cohort, unit, allocation, band_equipment, band_id) in cohorts.iter() {
@@ -536,26 +533,10 @@ pub fn calculate_visibility(
         }
     }
 
-    // Settlements with TownCenter
-    for (settlement, _town_center) in settlements.iter() {
-        settlement_count += 1;
-        let range_def = cfg.sight_range_for("TownCenter");
-        sources.push(VisionSource {
-            faction: settlement.faction,
-            position: settlement.position,
-            base_range: range_def.base_range,
-            elevation_bonus_factor: range_def.elevation_bonus_factor,
-            scout_band: None,
-            // A settlement is not a band, so it reveals ground and finds nobody.
-            observer_band: None,
-        });
-    }
-
     tracing::info!(
         target: "shadow_scale::visibility",
         source_count = sources.len(),
         cohort_count,
-        settlement_count,
         "visibility.step2_calculate sources_collected"
     );
 

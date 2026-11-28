@@ -137,8 +137,6 @@ pub const NO_BUILD_DESTINATION_CAPACITY: f32 = -1.0;
 pub struct SedentarizationState {
     pub faction: u32,
     pub score: f32,
-    #[serde(default)]
-    pub stage: String,
     /// The belief input's raw points this turn (`100 × weights.belief × belief_norm`), before the
     /// EMA that smooths `score`. Appended last.
     #[serde(default)]

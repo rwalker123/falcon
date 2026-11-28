@@ -46,6 +46,10 @@ pub struct LeadershipConfig {
     pub tribe_weight_acting: f64,
     /// Weight of the kept-monument-on-the-shared-urn input.
     pub tribe_weight_monument: f64,
+    /// Weight of the settlement-pull input: a pair banks faster while either band belongs to a
+    /// tribe at or above the pull stage (`settlement_stage_config.json` -> `pull_from_stage`),
+    /// scaled by that stage.
+    pub tribe_weight_settlement: f64,
     /// Turns apart that empty a full points bank (a bank fades `tribe_score_threshold / this`
     /// points per turn while its pair is not local).
     pub tribe_points_fade_turns: f64,
@@ -129,6 +133,7 @@ impl LeadershipConfig {
             ("tribe_weight_belief", self.tribe_weight_belief),
             ("tribe_weight_acting", self.tribe_weight_acting),
             ("tribe_weight_monument", self.tribe_weight_monument),
+            ("tribe_weight_settlement", self.tribe_weight_settlement),
         ] {
             if !(value.is_finite() && value >= 0.0) {
                 return Err(format!("{name} must be finite and >= 0, got {value}"));
@@ -267,6 +272,7 @@ mod tests {
             config.tribe_weight_belief,
             config.tribe_weight_acting,
             config.tribe_weight_monument,
+            config.tribe_weight_settlement,
             config.tribe_points_fade_turns,
             config.tribe_score_threshold,
             config.reach_chief_people,

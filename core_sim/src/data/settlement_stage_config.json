@@ -1,7 +1,11 @@
 {
+  "_comment": "THE SETTLEMENT STAGE LADDER (#176). A settlement is a tribe, or a lone band in none; each turn it resolves to the highest row whose criteria ALL hold. min_size is head-count summed over the settlement's bands; min_store_rung is the highest food_stores rung any member's owned store holds (compared by the ladder's order); min_food is food stored across the members' larders and owned fixed stores; min_belief is belief on the settlement's anchor tile. `announce` rows are told on the command feed the first turn a settlement newly reaches them. `pull_from_stage` is the row from which a tribe pulls nearby bands (leadership_config tribe_weight_settlement). EVERY THRESHOLD IS AN OPENING VALUE AND A PLAYTEST DIAL: town 300 + a pit; city 1000 + a granary + 1500 food (three-quarters of one granary's 2000, so it must be kept stocked) + 30 belief (a place of real dead, about 1.5x the tether's 20-dead reference).",
+  "pull_from_stage": "village",
   "stages": [
     { "id": "nomadic", "label": "Nomadic band",  "icon": "⛺",  "criteria": { "min_size": 0 } },
     { "id": "camp",    "label": "Seasonal camp", "icon": "🛖",  "criteria": { "min_size": 50 } },
-    { "id": "village", "label": "Village",        "icon": "🏘️", "criteria": { "min_size": 100 } }
+    { "id": "village", "label": "Village",        "icon": "🏘️", "criteria": { "min_size": 100 } },
+    { "id": "town",    "label": "Town",           "icon": "🏛️", "criteria": { "min_size": 300, "min_store_rung": "food_stores:storage_pit" } },
+    { "id": "city",    "label": "City",           "icon": "🏙️", "criteria": { "min_size": 1000, "min_store_rung": "food_stores:granary", "min_food": 1500.0, "min_belief": 30.0 }, "announce": true }
   ]
 }

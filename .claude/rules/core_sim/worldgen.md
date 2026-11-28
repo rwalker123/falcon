@@ -62,8 +62,9 @@ changes nothing.
 | `tiles[].at` | `[x, y]` | off the map, or listed twice |
 | `tiles[].terrain` | Optional. The `TerrainType` name to swap to; the tile's tags are re-read from `terrain_definition` | not a terrain; a water or mountain (`Highland`/`Volcanic` niche) target; at Startup, a tile that is water, `NavigableRiver`, a mountain, or of a `Highland`/`Volcanic` niche (one predicate for source and target, so a generated hill tile cannot be flattened either) |
 | `tiles[].flora` | Optional. The species that grow there, stored as `Tile.flora_override` (see `flora.md`) | empty, a species twice, not on the flora roster; at Startup, a species the tile's final biome does not host |
+| `tiles[].belief` | Optional. Belief standing on the tile at load, in dead-equivalents (`belief.md`). A playtest setter, not a worldgen input: `finish_scenario` adds it through `BeliefRegistry::add`, the one seam, so a band within walking reach adopts the tile as its anchor (`refresh_belief_anchor`) | not a finite amount above zero |
 
-An entry must name `terrain`, `flora` or both. **Terrain is land→land only**, because elevation is
+An entry must name `terrain`, `flora`, `belief` or any of them. **Terrain is land→land only**, because elevation is
 the terrain authority: the land mask, the coast, the rivers and the mountains derive from it, and
 none has a point to re-derive from after an override. Temperature is not overridden.
 

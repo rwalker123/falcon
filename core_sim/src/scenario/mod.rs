@@ -23,6 +23,7 @@ pub mod pens;
 pub mod roads;
 pub mod rungs;
 pub mod tiles;
+pub mod tribes;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -69,6 +70,7 @@ use crate::start_profile::{
 use crate::starting_loadout::{
     KitAllocation, LoadoutSupply, LoadoutWindow, MaterialAllocation, StartingLoadout,
 };
+use crate::telling::{BeatCatalogHandle, BeatLedger};
 use crate::world_roster::{apply_start_profile, seed_faction_roster};
 use crate::{faction_start_land_fraction, granted_archetype_counts};
 
@@ -283,6 +285,21 @@ pub struct ScenarioFile {
     pub herds: Vec<HerdEntry>,
     /// World state, not a faction's: a deposit has no owner.
     pub deposits: Vec<DepositEntry>,
+    /// Optional, default `true` (the game's own new-game opening). `false` = the scenario opens
+    /// mid-game: no band holds an open outfitting window, and the Telling's game-opening beats (the
+    /// ones its catalog marks `opening`) never fire. A file that also states a band `outfit` is
+    /// refused, since an outfit is stated in that window.
+    #[serde(default = "default_opening", skip_serializing_if = "is_true")]
+    pub opening: bool,
+}
+
+/// The default of [`ScenarioFile::opening`]: a scenario opens like a new game.
+fn default_opening() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 /// The `new_game` arguments, every one required.
@@ -422,8 +439,22 @@ pub fn parse_scenario(
             requested_counts = counts;
         }
     }
+    if !file.opening {
+        for (i, faction) in file.factions.iter().enumerate() {
+            for (j, band) in faction.bands.iter().enumerate() {
+                if band.outfit.is_some() {
+                    refusals.push(ScenarioRefusal::new(
+                        format!("factions[{i}].bands[{j}].outfit"),
+                        "an outfit is stated in the opening outfitting window, and `opening: false` \
+                         means the scenario has none",
+                    ));
+                }
+            }
+        }
+    }
     bands::check(&file.factions, ctx, &mut refusals);
     bench::check(&file.factions, ctx, &mut refusals);
+    tribes::check(&file.factions, &mut refusals);
     rungs::check(&file.factions, &file.herds, ctx, &mut refusals);
     labor::check(&file.factions, &file.herds, &file.world, ctx, &mut refusals);
     pens::check(&file.factions, &file.herds, &mut refusals);
@@ -484,8 +515,22 @@ pub fn build_scenario_world(
     app.insert_resource(ScenarioHerdSetup {
         herds: plan.file.herds.clone(),
     });
+    // **A mid-game scenario never tells the opening.** The beats are retired in the ledger BEFORE the
+    // build turn, because the Telling runs on that turn; a ledger entry also survives a save.
+    if !plan.file.opening {
+        let catalog = app.world.resource::<BeatCatalogHandle>().get();
+        app.world
+            .resource_mut::<BeatLedger>()
+            .retire_opening_beats(&catalog);
+    }
     run_turn(app);
-    finish_scenario(&mut app.world, &plan.file.deposits)
+    let applied = finish_scenario(&mut app.world, &plan.file.deposits)?;
+    // The build pass opened the spawned bands' windows (and committed their default outfits); a
+    // mid-game scenario closes them as the first turn advance would.
+    if !plan.file.opening {
+        app.world.resource_mut::<StartingLoadout>().close_all();
+    }
+    Ok(applied)
 }
 
 /// **How many decimal places an exported float keeps** (ages, larders, a herd's stock, a floor).
@@ -573,6 +618,9 @@ pub(crate) fn herd_scenario_id(index: usize) -> String {
 
 /// The one line the `tiles` section's export says: the live world does not remember its overrides.
 const TILES_NOT_EXPORTED_NOTE: &str = "tile overrides are not exported";
+/// The line a world holding a tribe writes: the file founds one only from its `tribes` section.
+const TRIBES_NOT_EXPORTED_NOTE: &str =
+    "tribes are not exported: a reload earns them again, or name them in a `tribes` section";
 
 /// **The `world` section of the live game**: the arguments it was built from, read off the config the
 /// build wrote them into.
@@ -639,6 +687,9 @@ pub fn export_scenario(world: &mut World, name: &str) -> ScenarioExport {
     let deposits = deposits::export(world);
     bands::export_unexpressed(world, &mut notes);
     notes.push(TILES_NOT_EXPORTED_NOTE.to_string());
+    if !world.resource::<crate::TribeRegistry>().is_empty() {
+        notes.push(TRIBES_NOT_EXPORTED_NOTE.to_string());
+    }
     let file = ScenarioFile {
         name: name.to_string(),
         note: notes.join("\n"),
@@ -647,6 +698,7 @@ pub fn export_scenario(world: &mut World, name: &str) -> ScenarioExport {
         tiles: Vec::new(),
         herds: herd_entries,
         deposits,
+        opening: true,
     };
     ScenarioExport { file, notes }
 }
@@ -674,6 +726,16 @@ pub fn finish_scenario(
     };
     let herd_setup = world.remove_resource::<ScenarioHerdSetup>();
     let mut refusals = setup.take_refusals();
+    // **Belief a tile stands with** (the `tiles` section's `belief`): added through the registry's
+    // one seam, before any band's anchor is read.
+    {
+        let mut registry = world.resource_mut::<crate::BeliefRegistry>();
+        for entry in &setup.tiles {
+            if let Some(amount) = entry.belief {
+                registry.add(bevy::math::UVec2::new(entry.at[0], entry.at[1]), amount);
+            }
+        }
+    }
     // **A band opens at exactly what the file says.** The build turn fed, aged and buried the bands
     // the Startup seeding made, so each one's head-count, age shape and larder are stamped again from
     // the file, through the seeding's own body, before anything reads them (the outfit's carry counts
@@ -798,6 +860,9 @@ pub fn finish_scenario(
             }
         }
     }
+    // **Settled stock after every outfit window, before auto-craft**: written straight into the
+    // inventory, outside the carry cap, so it lands whether or not a window was ever open.
+    bands::apply_stock(world, &setup);
     // **Auto-craft after the outfit, before labor**: the bench fills from the gear the outfit left.
     if !refusals.is_empty() {
         return Err(refusals);
@@ -832,6 +897,9 @@ pub fn finish_scenario(
     // band's own row holds. The reservation is removed whichever way the replay ends.
     world.insert_resource(labor::reservations(&setup, &herds));
     bands::apply_leaders(world, &setup, &mut refusals);
+    if refusals.is_empty() {
+        tribes::apply(world, &setup, &mut refusals);
+    }
     let labor_replay: Result<(), ()> = 'labor: {
         // **Labor after every faction's outfit** (plan section 2.8 step 6): the outfit is an ordinary
         // revision of the opening window, and a work row's gear is read against the outfit it ends up with.
