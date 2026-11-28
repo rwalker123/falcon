@@ -153,6 +153,10 @@ fn create_tiles<'a>(
                     forageCapacity: tile.forage_capacity,
                     underlyingTerrain: to_fb_terrain_type(tile.underlying_terrain),
                     belief: tile.belief,
+                    beliefFromDeaths: tile.belief_from_deaths,
+                    beliefFromGatherings: tile.belief_from_gatherings,
+                    beliefFromMonument: tile.belief_from_monument,
+                    beliefWeight: tile.belief_weight,
                     riverEdges: tile.river_edges,
                     riverInflow: tile.river_inflow,
                     riverChannel: tile.river_channel,
@@ -352,6 +356,10 @@ fn decode_tile(tile: fb::TileState<'_>) -> Result<TileState, DecodeError> {
         forage_capacity: tile.forageCapacity(),
         underlying_terrain: to_state_terrain_type(tile.underlyingTerrain())?,
         belief: tile.belief(),
+        belief_from_deaths: tile.beliefFromDeaths(),
+        belief_from_gatherings: tile.beliefFromGatherings(),
+        belief_from_monument: tile.beliefFromMonument(),
+        belief_weight: tile.beliefWeight(),
     })
 }
 

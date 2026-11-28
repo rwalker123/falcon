@@ -1382,9 +1382,15 @@ func _build_people_block(band: Dictionary) -> VBoxContainer:
         _band_labor.working_breakdown(band), HudWorkVocab.IDLE_CARD_REASON_BAND)
     var away_workers := _band_labor.band_party_workers(band)
     var block := HudWidgets.make_zone_block()
+    # The cohesion ceiling beside the head-count: amber once the band holds more than it can hold together.
+    var ceiling := int(band.get("cohesion_ceiling", 0))
+    var over_ceiling := ceiling > 0 and int(band.get("cohesion_headcount", 0)) > ceiling
     block.add_child(HudWidgets.zone_head(HudWorkVocab.ZONE_HEADER_PEOPLE,
         HudWidgets.people_head_readout(total, away_workers), null, HudStyle.INK_DIM,
-        HudWorkVocab.PEOPLE_AWAY_TOOLTIP_FORMAT % away_workers if away_workers > 0 else ""))
+        HudWorkVocab.PEOPLE_AWAY_TOOLTIP_FORMAT % away_workers if away_workers > 0 else "", "",
+        HudWorkVocab.PEOPLE_HOLDS_FORMAT % ceiling if ceiling > 0 else "",
+        HudStyle.WARN if over_ceiling else HudStyle.INK_DIM,
+        HudWorkVocab.PEOPLE_HOLDS_TOOLTIP_FORMAT % ceiling if ceiling > 0 else ""))
     block.add_child(HudWidgets.build_composition_bar(segments))
     block.add_child(HudWidgets.build_composition_key(segments,
         _build_dependency_chip(children, int(band.get("working_age", 0)), elders)))

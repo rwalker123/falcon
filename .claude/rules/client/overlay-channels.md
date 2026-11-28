@@ -21,6 +21,7 @@ Raster overlays streamed from `core_sim`:
 | `military` | Green | Readiness scalar |
 | `terrain_tags` | Blended | Per-tag colors averaged |
 | `pasture` | Straw→grass ramp, **+ two off-ramp barren tones** | The GRAZE layer's per-tile **capacity** (`TileState.grazeCapacity`) |
+| `sacred_ground` | No tint at 0, then a faint→strong `HudStyle.BELIEF` violet wash | **NOT a wire raster** — client-derived from the per-tile sim-published `belief_weight` (`MapView.tile_belief_weight`), `MapView._build_sacred_ground_channel` |
 | `forage` | Wheat→green ramp, **+ one off-ramp barren tone** | The FORAGE (human food) layer's per-tile **capacity** (`TileState.forageCapacity`) |
 | `hunt_danger` | Danger orange (generic lerp) | **NOT a wire raster** — projected client-side, `attack × ferocity` per herd (see below) |
 | `threat` | Threat red (generic lerp) | **NOT a wire raster** — projected client-side, `attack × aggression` per herd (see below) |
@@ -656,6 +657,17 @@ let the player ask for.
 The registry owns the channel's three player-facing strings (`OverlayChannels.TEMPERATURE_KEY` /
 `_LABEL` / `_DESCRIPTION`) and `MapView` reads them back, so the picker's list and the channel the
 renderer stamps into its own table cannot become two names for one thing.
+
+### The sacred ground channel (#703)
+
+Client-derived exactly like temperature: one `OverlayChannels.CHANNELS` row (`SACRED_GROUND_KEY` /
+`_LABEL` / `_DESCRIPTION`), one `DEFERRED_OVERLAY_BUILDERS` entry (`_build_sacred_ground_channel`), gated on
+`MapView.has_sacred_ground_data()` (tiles, not the raster). The plane IS the sim's `belief_weight`
+(already [0,1), 0 below the sim's adoption line), so the client restates no formula or line. A tile at 0
+paints `GRID_COLOR`; above it `_sacred_ground_color` washes `HudStyle.BELIEF` over it from
+`SACRED_GROUND_FAINT_BLEND` to `SACRED_GROUND_STRONG_BLEND`, shared by the paint and the legend swatches.
+No `OVERLAY_COLORS` row, so the legend button wears the neutral face; the urn marks and reach outline
+still draw on top.
 
 ### The treatment: an honest gradient, with lethality on a SECOND channel
 

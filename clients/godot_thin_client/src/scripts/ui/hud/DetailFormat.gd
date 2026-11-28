@@ -1072,6 +1072,10 @@ class Context extends RefCounted:
     ## standing summary warns it is over-taken. A READOUT row (no door) wears the mark only where its entry
     ## states a crew above zero -- a stated fact outside any url, so a refused tile branch still shows its crew.
     var door_crews: Dictionary = {}
+    ## A row's VALUE as ready-made BBCode -- `{line index: bbcode}` -- for the one row whose value is
+    ## several inks at once (the sacred-ground sources bar). The line's own text still says the value
+    ## plainly (a harness and a plain-text reader see it); the renderer swaps this in over it.
+    var value_runs: Dictionary = {}
     ## The door the pointer is over and the door whose sheet is open (metas, `""` for none). The renderer
     ## washes BOTH cells of the row: `HudStyle.DOOR_HOVER_WASH_HEX` for the first, the stronger
     ## `DOOR_SELECTED_WASH_HEX` for the second, and the second wins where both hold.
@@ -1238,6 +1242,8 @@ static func detail_bbcode(lines: Array, ctx: Context = null) -> String:
                 table_key_widths[table_index] = maxf(table_key_widths[table_index],
                     _rendered_width(context, row_key))
             var value_run := "[color=#%s]%s[/color]" % [_value_hex(row_key, String(kv[1]), context), kv[1]]
+            if context.value_runs.has(line_index):
+                value_run = String(context.value_runs[line_index])
             var key_run := _key_cell(row_key, context)
             var cell_open := "[cell]"
             var value_cell_open := "[cell]"
@@ -3189,11 +3195,28 @@ static func expedition_mission_label(mission: String) -> String:
         return HudExpeditionVocab.EXPEDITION_MISSION_LABELS[key]
     return key.capitalize() if key != "" else "Expedition"
 
-# The tile card's SACRED GROUND row (#870): shown only where the tile IS the sacred ground of one or more
-# of the player's own bands -- the same strength bar and word the Beliefs pull-down draws, off the
-# strongest `belief_anchor_weight` among the bands holding it. A tile no band of the player's holds as its
-# sacred ground has no row, whatever dead it carries.
+# The tile card's SACRED GROUND row (#870, widened by #703): shown on ANY tile the sim calls sacred ground
+# (`belief_weight` > 0 -- the sim zeroes it below its adoption line, so the client states no line of its
+# own) -- the same strength bar and word the Beliefs pull-down draws, off the tile's own `belief_weight`
+# (equal to the holder's `belief_anchor_weight` where one of the player's bands holds it). The hover names
+# who honours it, or says none of the player's bands does. A SOURCES row beneath splits the tile's belief
+# into the dead / gatherings / monument stocks as a thin bar in three violet shades.
 const SACRED_GROUND_ROW := "Sacred ground"
+const SACRED_GROUND_UNHELD_HOVER := "None of your bands honours it."
+const SACRED_SOURCES_ROW := "From"
+## The split bar is this many pips wide, apportioned across the sources by their stocks.
+const SACRED_SOURCES_PIPS := 12
+## The three sources' pip shades, off `HudStyle.BELIEF` (the middle one IS the violet): the dead darker, the
+## monument lighter, so the three read apart without leaving the family.
+const SACRED_SOURCES_DEAD_DARKEN := 0.4
+const SACRED_SOURCES_MONUMENT_LIGHTEN := 0.45
+## Source order is the sentence's and the bar's: key into tile_info, clause format.
+const SACRED_SOURCES: Array[Dictionary] = [
+    {"key": "belief_from_deaths", "format": "from the dead %d"},
+    {"key": "belief_from_gatherings", "format": "from gatherings %d"},
+    {"key": "belief_from_monument", "format": "from the monument %d"},
+]
+const SACRED_SOURCES_SEPARATOR := " · "
 const SACRED_GROUND_HONOURED_ONE_FORMAT := "Honoured by %s"
 const SACRED_GROUND_HONOURED_MANY_FORMAT := "%s and %d other bands"
 const SACRED_GROUND_HONOURED_ONE_OTHER_FORMAT := "%s and 1 other band"
@@ -3220,21 +3243,107 @@ static func sacred_ground_holders(bands: Array, x: int, y: int) -> Array:
             holders.append(band)
     return holders
 
-## The tile card's `Sacred ground: ▰▰▰▱▱ hallowed` row, or `""` where none of `bands` holds the tile.
-static func sacred_ground_line(tile_info: Dictionary, bands: Array) -> String:
-    var holders := sacred_ground_holders(bands, int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
-    if holders.is_empty():
+## The tile card's `Sacred ground: ▰▰▰▱▱ hallowed` row, or `""` where the tile is not sacred ground
+## (`belief_weight` 0). `bands` is unused by the line itself -- the tile's weight IS the holder's anchor
+## weight on a held tile -- and stays so the producer's call shape is one for line and hover.
+static func sacred_ground_line(tile_info: Dictionary, _bands: Array) -> String:
+    var weight := float(tile_info.get("belief_weight", 0.0))
+    if weight <= 0.0:
         return ""
-    var weight := 0.0
-    for holder in holders:
-        weight = maxf(weight, float(holder.get(HudDisclosureVocab.BELIEFS_PLACE_WEIGHT_KEY, 0.0)))
     return "%s%s%s" % [SACRED_GROUND_ROW, DETAIL_KV_SEPARATOR, sacred_ground_bar(weight)]
 
-## The row's hover: who honours the ground.
+## The whole-number stock each source holds on the tile, `[deaths, gatherings, monument]` (the
+## dead-equivalent unit), a source that rounds to nothing reading 0.
+static func sacred_source_counts(tile_info: Dictionary) -> Array[int]:
+    var counts: Array[int] = []
+    for source in SACRED_SOURCES:
+        counts.append(maxi(0, roundi(float(tile_info.get(String(source["key"]), 0.0)))))
+    return counts
+
+## `From the dead 12 · from gatherings 3 · from the monument 2`: the sources' sentence, a zero source
+## omitted, or `""` where none holds anything.
+static func sacred_sources_sentence(tile_info: Dictionary) -> String:
+    var counts := sacred_source_counts(tile_info)
+    var parts: Array[String] = []
+    for i in range(SACRED_SOURCES.size()):
+        if counts[i] > 0:
+            parts.append(String(SACRED_SOURCES[i]["format"]) % counts[i])
+    if parts.is_empty():
+        return ""
+    var sentence := SACRED_SOURCES_SEPARATOR.join(parts)
+    return sentence.substr(0, 1).to_upper() + sentence.substr(1)
+
+## The split bar's pips per source, apportioned by stock (largest remainder), every present source keeping at
+## least one pip so a small share still shows.
+static func sacred_sources_pips(counts: Array[int]) -> Array[int]:
+    var total := 0
+    for count in counts:
+        total += count
+    var pips: Array[int] = []
+    if total <= 0:
+        return pips
+    var remainders: Array[float] = []
+    var assigned := 0
+    for count in counts:
+        var exact := float(SACRED_SOURCES_PIPS) * float(count) / float(total)
+        var whole := int(floor(exact))
+        if count > 0:
+            whole = maxi(whole, 1)
+        pips.append(whole)
+        remainders.append(exact - floor(exact) if count > 0 else -1.0)
+        assigned += whole
+    while assigned < SACRED_SOURCES_PIPS:
+        var best := 0
+        for i in range(pips.size()):
+            if remainders[i] > remainders[best]:
+                best = i
+        pips[best] += 1
+        remainders[best] = -1.0
+        assigned += 1
+    while assigned > SACRED_SOURCES_PIPS:
+        var widest := 0
+        for i in range(pips.size()):
+            if pips[i] > pips[widest]:
+                widest = i
+        pips[widest] -= 1
+        assigned -= 1
+    return pips
+
+static func sacred_source_color(index: int) -> Color:
+    match index:
+        0:
+            return HudStyle.BELIEF.darkened(SACRED_SOURCES_DEAD_DARKEN)
+        2:
+            return HudStyle.BELIEF.lightened(SACRED_SOURCES_MONUMENT_LIGHTEN)
+        _:
+            return HudStyle.BELIEF
+
+## The sources row: `{"line": "From: ▰▰▰▰▰▰▰▰▰▰▰▰", "run": <the value's BBCode, one colour per source>,
+## "sentence": <its hover>}`, or `{}` where the tile holds no belief to split.
+static func sacred_sources_row(tile_info: Dictionary) -> Dictionary:
+    var counts := sacred_source_counts(tile_info)
+    var pips := sacred_sources_pips(counts)
+    if pips.is_empty():
+        return {}
+    var run := ""
+    var plain := ""
+    for i in range(pips.size()):
+        if pips[i] <= 0:
+            continue
+        var cells := HudDisclosureVocab.BELIEFS_BAR_FILLED.repeat(pips[i])
+        plain += cells
+        run += "[color=#%s]%s[/color]" % [sacred_source_color(i).to_html(false), cells]
+    return {
+        "line": "%s%s%s" % [SACRED_SOURCES_ROW, DETAIL_KV_SEPARATOR, plain],
+        "run": run,
+        "sentence": sacred_sources_sentence(tile_info),
+    }
+
+## The row's hover: who honours the ground, or that none of the player's bands does.
 static func sacred_ground_hover(tile_info: Dictionary, bands: Array) -> String:
     var holders := sacred_ground_holders(bands, int(tile_info.get("x", -1)), int(tile_info.get("y", -1)))
     if holders.is_empty():
-        return ""
+        return SACRED_GROUND_UNHELD_HOVER if float(tile_info.get("belief_weight", 0.0)) > 0.0 else ""
     var first := HudFormat.band_name(holders[0])
     match holders.size():
         1:

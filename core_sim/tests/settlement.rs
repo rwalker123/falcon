@@ -200,7 +200,7 @@ fn city_grade_band(size: u32, food: f32, belief: f32) -> (App, Entity) {
     keep_store(&mut app, id(1), faction, "granary", food);
     app.world
         .resource_mut::<BeliefRegistry>()
-        .add(PLACE, belief);
+        .add(PLACE, core_sim::BeliefSource::Deaths, belief);
     (app, entity)
 }
 
@@ -262,18 +262,22 @@ fn the_store_rung_food_and_belief_each_gate_the_city() {
     let entity = band(&mut app, 1, CITY_PEOPLE, 1);
     let faction = faction_of(&app, entity);
     keep_store(&mut app, id(1), faction, "storage_pit", A_FULL_GRANARY);
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(PLACE, A_GREAT_URN);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        PLACE,
+        core_sim::BeliefSource::Deaths,
+        A_GREAT_URN,
+    );
     settle(&mut app);
     assert_eq!(band_stage(&app, 1), "town", "a pit is not a granary");
 
     // No store at all: a village however many.
     let mut app = spawn_world();
     band(&mut app, 1, CITY_PEOPLE, 1);
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(PLACE, A_GREAT_URN);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        PLACE,
+        core_sim::BeliefSource::Deaths,
+        A_GREAT_URN,
+    );
     settle(&mut app);
     assert_eq!(band_stage(&app, 1), "village", "no store");
 }
@@ -285,9 +289,11 @@ fn a_store_owned_by_another_band_is_not_this_bands_store() {
     band(&mut app, 2, 30, 2);
     let faction = faction_of(&app, entity);
     keep_store(&mut app, id(2), faction, "granary", A_FULL_GRANARY);
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(PLACE, A_GREAT_URN);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        PLACE,
+        core_sim::BeliefSource::Deaths,
+        A_GREAT_URN,
+    );
     settle(&mut app);
     assert_eq!(band_stage(&app, 1), "village", "band 2 owns the granary");
     assert_eq!(band_stage(&app, 2), "nomadic");
@@ -351,9 +357,11 @@ fn a_tribe_reaching_the_city_is_told_once_against_the_tribe() {
 
     let faction = faction_of(&app, one);
     keep_store(&mut app, id(1), faction, "granary", A_FULL_GRANARY);
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(PLACE, A_GREAT_URN);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        PLACE,
+        core_sim::BeliefSource::Deaths,
+        A_GREAT_URN,
+    );
     for band in [1, 2] {
         let entity = app_band(&mut app, band);
         app.world.get_mut::<PopulationCohort>(entity).unwrap().size = CITY_PEOPLE / 2;
@@ -509,9 +517,11 @@ fn a_new_tribe_above_its_members_stage_announces_the_climb() {
     band(&mut app, 2, CITY_PEOPLE / 2, 1);
     let faction = faction_of(&app, one);
     keep_store(&mut app, id(1), faction, "granary", A_FULL_GRANARY);
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(PLACE, A_GREAT_URN);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        PLACE,
+        core_sim::BeliefSource::Deaths,
+        A_GREAT_URN,
+    );
     settle(&mut app);
     assert_eq!(band_stage(&app, 1), "town");
     assert!(reached(&app).is_empty(), "neither band is a city");

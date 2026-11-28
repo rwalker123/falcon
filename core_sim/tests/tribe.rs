@@ -470,9 +470,11 @@ fn a_less_alike_pair_takes_longer_to_close() {
 #[test]
 fn belief_on_the_shared_urn_raises_the_rate() {
     let (mut app, _, _) = kin_pair();
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(PLACE_A, GREAT_URN);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        PLACE_A,
+        core_sim::BeliefSource::Deaths,
+        GREAT_URN,
+    );
     let ran = turns_until_tribe(&mut app);
     let rate = rate_of_pair(&app);
     assert!(rate > 8.0 && rate <= 9.0, "8 + about 1 of belief: {rate}");

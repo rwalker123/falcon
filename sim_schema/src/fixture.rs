@@ -266,6 +266,10 @@ fn blank_tile() -> TileState {
         forage_capacity: 0.0,
         underlying_terrain: TerrainType::AlluvialPlain,
         belief: 0.0,
+        belief_from_deaths: 0.0,
+        belief_from_gatherings: 0.0,
+        belief_from_monument: 0.0,
+        belief_weight: 0.0,
     }
 }
 

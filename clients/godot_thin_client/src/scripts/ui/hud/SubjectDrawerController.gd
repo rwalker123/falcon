@@ -511,6 +511,12 @@ func _append_tile_branch_rows(lines: Array[String], tile_info: Dictionary,
         _add_row_hover(ctx, DetailFormat.SACRED_GROUND_ROW, DetailFormat.sacred_ground_hover(tile_info, bands))
         var belief_model := _tile_model_for_row(models, DetailFormat.SACRED_GROUND_ROW)
         _append_tile_row(lines, ctx, sacred, belief_model)
+        var sources := DetailFormat.sacred_sources_row(tile_info)
+        if not sources.is_empty():
+            if ctx != null:
+                ctx.value_runs[lines.size()] = String(sources["run"])
+            _add_row_hover(ctx, DetailFormat.SACRED_SOURCES_ROW, String(sources["sentence"]))
+            _append_tile_row(lines, ctx, String(sources["line"]), {})
     for model in models:
         var row_key := String(model["row_key"])
         if row_key == DetailFormat.SACRED_GROUND_ROW:

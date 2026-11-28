@@ -197,7 +197,9 @@ fn scene(belief: f32, ritual: bool) -> (App, Entity, FactionId, UVec2) {
         .stores
         .add_food_aged(LARDER_CLASS, scalar_from_f32(LARDER), 0);
     *app.world.resource_mut::<BeliefRegistry>() = BeliefRegistry::default();
-    app.world.resource_mut::<BeliefRegistry>().add(tile, belief);
+    app.world
+        .resource_mut::<BeliefRegistry>()
+        .add(tile, core_sim::BeliefSource::Deaths, belief);
     if ritual {
         learn_ritual(&mut app, faction);
     }
@@ -276,23 +278,29 @@ fn a_monument_needs_a_tile_that_holds_belief() {
     // reading each turn.
     for _ in 0..6 {
         *app.world.resource_mut::<BeliefRegistry>() = BeliefRegistry::default();
-        app.world
-            .resource_mut::<BeliefRegistry>()
-            .add(tile, SHORT_OF_ONE);
+        app.world.resource_mut::<BeliefRegistry>().add(
+            tile,
+            core_sim::BeliefSource::Deaths,
+            SHORT_OF_ONE,
+        );
         app.update();
     }
     *app.world.resource_mut::<BeliefRegistry>() = BeliefRegistry::default();
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(tile, SHORT_OF_ONE);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        tile,
+        core_sim::BeliefSource::Deaths,
+        SHORT_OF_ONE,
+    );
     assert_eq!(
         position(&app, tile),
         0.0,
         "half a dead-equivalent is not a gathering ground"
     );
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(tile, 1.0 - SHORT_OF_ONE);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        tile,
+        core_sim::BeliefSource::Deaths,
+        1.0 - SHORT_OF_ONE,
+    );
     run_until(&mut app, "the monument going up", |app| {
         held(app, tile) == monument()
     });

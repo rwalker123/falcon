@@ -28613,9 +28613,11 @@ mod tests {
         let ask =
             |app: &bevy::prelude::App| validate_tile_verb(app, faction, WORKING, branch, rung);
 
-        app.world
-            .resource_mut::<core_sim::BeliefRegistry>()
-            .add(WORKING, ENOUGH);
+        app.world.resource_mut::<core_sim::BeliefRegistry>().add(
+            WORKING,
+            core_sim::BeliefSource::Deaths,
+            ENOUGH,
+        );
         let unlearned = ask(&app).expect_err("ritual is not learned");
         assert!(unlearned.contains("Ritual"), "{unlearned}");
 
@@ -28627,9 +28629,11 @@ mod tests {
         );
 
         *app.world.resource_mut::<core_sim::BeliefRegistry>() = core_sim::BeliefRegistry::default();
-        app.world
-            .resource_mut::<core_sim::BeliefRegistry>()
-            .add(WORKING, SHORT_OF_ONE);
+        app.world.resource_mut::<core_sim::BeliefRegistry>().add(
+            WORKING,
+            core_sim::BeliefSource::Deaths,
+            SHORT_OF_ONE,
+        );
         let short = ask(&app).expect_err("half a dead-equivalent is not a gathering ground");
         assert!(short.contains("belief"), "{short}");
     }

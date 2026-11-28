@@ -166,6 +166,18 @@ impl CultureConfig {
         belief / (belief + self.belief_half_saturation)
     }
 
+    /// **The tile's sacred-ground weight** — [`Self::anchor_weight`] where `belief` reaches
+    /// `min_anchor_belief` (the line a band adopts an anchor at), else `0`. Published per tile as
+    /// `TileState.beliefWeight`, so the client never restates the formula or the line.
+    pub fn sacred_weight(&self, belief: f32) -> f32 {
+        const NOT_SACRED: f32 = 0.0;
+        if belief >= self.min_anchor_belief {
+            self.anchor_weight(belief)
+        } else {
+            NOT_SACRED
+        }
+    }
+
     /// The relay strength `r = relay_per_hop ^ hops` of a band `hops` of kin from its anchor
     /// (`0` direct, `crate::belief_relay::DIRECT_HOPS`); `0` when no chain reaches it (`None`). At
     /// `relay_per_hop = 0` only a direct band reads `1`. The ONE place `r` is computed — the morale

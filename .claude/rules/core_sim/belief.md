@@ -50,7 +50,7 @@ consumers (issue #701) are "The ancestor pull" and "Belief feeds the tether".
 
 ## The store: `BeliefRegistry`
 
-A resource keyed by tile, `RoadRegistry`'s shape: a `BTreeMap<(y, x), f32>`, so iteration is
+A resource keyed by tile, `RoadRegistry`'s shape: a `BTreeMap<(y, x), BeliefSources>`, so iteration is
 row-major and the checkpoint observes an order rather than an accident. **Sparse** — only a tile
 holding belief has an entry, so an untouched map checkpoints an empty map.
 
@@ -59,10 +59,15 @@ holding belief has an entry, so an untouched map checkpoints an empty map.
 - **It is monotone.** Nothing subtracts from it and nothing decays it: an abandoned place keeps its
   dead, and a band that walks away leaves the stock where it accrued. The registry has no `remove` or
   `set`.
-- **`add(position, amount)` is THE seam every source writes through** — deaths, gatherings and a
-  held monument (#692), all on the same seam. An `amount <= 0` is ignored,
-  which is what keeps the stock monotone and the map sparse. `get(position)` answers `NO_BELIEF`
-  (`0.0`) where nothing has accrued.
+- **A tile holds three monotone stocks, one per source** — `BeliefSources { deaths, gatherings,
+  improvements }`, each in dead-equivalents; the tile's belief is their sum (`BeliefSources::total`).
+  The split exists so a client can say WHERE a place's belief came from.
+- **`add(position, source, amount)` is THE seam every source writes through** — `BeliefSource::Deaths`,
+  `Gatherings` and `Improvement` (the held monument, #692), all on the same seam. An `amount <= 0` is
+  ignored, which is what keeps every stock monotone and the map sparse. `get(position)` answers the
+  TOTAL (`NO_BELIEF`, `0.0`, where nothing has accrued), so every reader of belief is unchanged;
+  `sources(position)` answers the three stocks, and `iter()` yields the total. A scenario's staged
+  `belief` is credited to `Deaths` (a standing cemetery).
 - **`credit_deaths(position, deaths, config)`** is the deaths source's one expression,
   `deaths × belief_per_death`, so no call site restates it.
 - **`credit_gathering(position, config)`** is the gatherings source's, `belief_per_gathering`
@@ -452,12 +457,20 @@ is in `campaign.md` §Sedentarization.
 
 ## On the wire and in the checkpoint
 
-- **`TileState.belief:float`** (appended last on `snapshot.fbs`'s `TileState`) carries the registry's
-  value for every tile, read in the capture's one tile sweep beside graze. It is in
+- **`TileState.belief:float`** (appended on `snapshot.fbs`'s `TileState`) carries the registry's
+  total for every tile, read in the capture's one tile sweep beside graze. It is in
   `TileState::same_published_state` at the hundredths every other float uses, so a tile whose belief
   moved rides the next delta. Belief is not fog-gated, which is graze's arrangement.
-- **`SimState::belief`** carries the registry whole; a restore inserts it back. It is state, not
-  derived, for the road's reason: nothing can rebuild it. `SAVE_FORMAT_VERSION` 20.
+- **Per-source and sacred-ground fields**, appended last on `TileState`: `beliefFromDeaths`,
+  `beliefFromGatherings` and `beliefFromMonument` (the three stocks; their sum is `belief`), and
+  `beliefWeight` — `CultureConfig::sacred_weight(belief)`: the band's own saturating `anchor_weight`
+  when the tile's belief reaches `culture.min_anchor_belief`, else `0`. It is the client's gate for
+  "is this sacred ground" and its strength-bar value, so the client restates neither the formula nor
+  the adoption line. It is derived at capture from live config and is not checkpointed. All four are
+  in `same_published_state` at hundredths and are not fog-gated.
+- **`SimState::belief`** carries the registry whole (per-source); a restore inserts it back. It is
+  state, not derived, for the road's reason: nothing can rebuild it. The per-source shape is
+  `SAVE_FORMAT_VERSION` 76.
 - Classified in `sim_state_coverage.rs` — `BeliefRegistry` as sim state, the config handle and
   metadata as config resources.
 - **`PopulationCohortState.moraleCulture:long`** (appended last on the table, fixed-point like its
@@ -525,6 +538,9 @@ is in `campaign.md` §Sedentarization.
 | `belief::belief_per_death_scales_the_accrual` | the same deaths at a doubled lever credit twice the belief |
 | `belief::a_tiles_belief_is_on_the_frame_and_a_change_produces_a_tile_delta` | on the encoded envelope and on the stream's tile delta |
 | `belief::belief_round_trips_the_checkpoint_and_the_save` | `SimState` capture → restore, and the save payload |
+| `belief::deaths_a_gathering_and_a_monument_land_in_their_own_stocks_and_sum_to_the_total` | the three credit seams each fill their own stock, and `get` is their sum |
+| `belief::the_frame_carries_each_source_and_the_sacred_ground_weight` | on the encoded envelope: the three source fields sum to `belief`; `beliefWeight` equals `anchor_weight` at/above `min_anchor_belief` and is `0` below it |
+| `belief::per_source_belief_round_trips_the_checkpoint_and_the_save` | each stock survives checkpoint restore and the save payload |
 | `predator_raid::a_raids_dead_credit_belief_to_the_tile_the_band_stands_on` | a raid credits the lost head-count at the band's tile, not its home |
 | `raiding_party::a_raiding_partys_dead_credit_no_belief` | a lethal raid by a detached `Deny` party leaves the registry untouched (with a liveness assertion that people died) |
 | `labor_yield_tests::a_resident_hunts_dead_credit_belief_to_the_tile_the_band_stands_on` | the hunt seam credits the band's tile, and only the people actually lost |

@@ -231,8 +231,8 @@ fn strength_counts_each_anchor_once_and_each_foreign_band_once() {
     let (first, second) = (UVec2::new(3, 4), UVec2::new(5, 6));
     {
         let mut belief = s.app.world.resource_mut::<BeliefRegistry>();
-        belief.add(first, 10.0);
-        belief.add(second, 4.0);
+        belief.add(first, core_sim::BeliefSource::Deaths, 10.0);
+        belief.add(second, core_sim::BeliefSource::Deaths, 4.0);
     }
     for (entity, anchor) in [(s.a.0, first), (a2.0, first), (a3.0, second)] {
         s.app
@@ -271,10 +271,11 @@ fn strength_counts_each_anchor_once_and_each_foreign_band_once() {
 #[test]
 fn pressure_is_the_strength_ratio_times_the_size_ratio_to_the_exponent() {
     let mut s = staged();
-    s.app
-        .world
-        .resource_mut::<BeliefRegistry>()
-        .add(UVec2::new(3, 4), 40.0);
+    s.app.world.resource_mut::<BeliefRegistry>().add(
+        UVec2::new(3, 4),
+        core_sim::BeliefSource::Deaths,
+        40.0,
+    );
     s.app
         .world
         .get_mut::<PopulationCohort>(s.b.0)

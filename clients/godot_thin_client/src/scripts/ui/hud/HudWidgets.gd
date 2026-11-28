@@ -785,7 +785,7 @@ static func clear_children(node: Node) -> void:
 ## would lose its hover on exactly the calm band that most needs the words. It goes through
 ## `set_label_tooltip` for that helper's own reason: a `Label` defaults to `MOUSE_FILTER_IGNORE`, so a
 ## bare `tooltip_text` here is a silent no-op.
-static func zone_head(title: String, readout: String, menu: MenuButton = null, readout_color: Color = HudStyle.INK_DIM, readout_tooltip: String = "", title_tooltip: String = "") -> HBoxContainer:
+static func zone_head(title: String, readout: String, menu: MenuButton = null, readout_color: Color = HudStyle.INK_DIM, readout_tooltip: String = "", title_tooltip: String = "", clause: String = "", clause_color: Color = HudStyle.INK_DIM, clause_tooltip: String = "") -> HBoxContainer:
     var head := HBoxContainer.new()
     head.custom_minimum_size = Vector2(0.0, HudWorkVocab.ZONE_HEAD_HEIGHT)
     head.add_theme_constant_override("separation", HudWorkVocab.ZONE_HEAD_SEPARATION)
@@ -804,6 +804,14 @@ static func zone_head(title: String, readout: String, menu: MenuButton = null, r
         right.add_theme_color_override("font_color", readout_color)
         set_label_tooltip(right, readout_tooltip)
         head.add_child(right)
+    # A second run in its own ink beside the readout (the People head's `· holds N`, amber when over).
+    if clause != "":
+        var extra := Label.new()
+        extra.text = clause
+        extra.add_theme_font_size_override("font_size", HudWorkVocab.ZONE_HEAD_FONT_SIZE)
+        extra.add_theme_color_override("font_color", clause_color)
+        set_label_tooltip(extra, clause_tooltip)
+        head.add_child(extra)
     if menu != null:
         head.add_child(menu)
     return head

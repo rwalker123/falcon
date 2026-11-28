@@ -727,12 +727,17 @@ pub fn finish_scenario(
     let herd_setup = world.remove_resource::<ScenarioHerdSetup>();
     let mut refusals = setup.take_refusals();
     // **Belief a tile stands with** (the `tiles` section's `belief`): added through the registry's
-    // one seam, before any band's anchor is read.
+    // one seam (as the dead's stock, the source a standing cemetery is), before any band's anchor is
+    // read.
     {
         let mut registry = world.resource_mut::<crate::BeliefRegistry>();
         for entry in &setup.tiles {
             if let Some(amount) = entry.belief {
-                registry.add(bevy::math::UVec2::new(entry.at[0], entry.at[1]), amount);
+                registry.add(
+                    bevy::math::UVec2::new(entry.at[0], entry.at[1]),
+                    crate::BeliefSource::Deaths,
+                    amount,
+                );
             }
         }
     }
