@@ -132,6 +132,7 @@ pub mod trade_history;
 pub mod treaties;
 mod tribe;
 pub mod tribe_levy;
+pub mod tribe_proposals;
 mod turn_pipeline_config;
 pub mod turn_profile;
 mod victory;
@@ -1139,6 +1140,7 @@ pub fn build_headless_app() -> App {
         .insert_resource(systems::HeartLedger::default())
         .insert_resource(systems::CulturePressureLedger::default())
         .insert_resource(chief_proposals::ChiefProposalBook::default())
+        .insert_resource(tribe_proposals::TribeProposalBook::default())
         .insert_resource(systems::BreedingBreakOffs::default())
         .insert_resource(culture::CultureSplitQueue::default())
         .insert_resource(lineage::FreeBreedingPeoples::default())
@@ -1704,6 +1706,9 @@ pub fn build_headless_app() -> App {
                     .after(tribe::advance_tribes)
                     .after(mobility::mobility_tick)
                     .after(systems::publish_trade_telemetry),
+                // **The tribe leader's proposal** (#863): after the tribe pass, so it reads the fresh
+                // levy and the builds' crews the labor pass staffed. Exclusive, like the pass it follows.
+                tribe_proposals::advance_tribe_proposals.after(tribe_levy::advance_tribe_levy),
                 // **Settlement stages are read off the tribes this turn settled**: a tribe formed,
                 // joined or dissolved this turn is read as it now stands. The tribe closeness pull, which
                 // runs earlier, sees last turn's stages.

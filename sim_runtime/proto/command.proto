@@ -472,8 +472,8 @@ message BandOrderCommand {
 
 // A TRIBE'S ORDER, addressed by one of its member bands (#862). `action` is "work" (add or update a
 // work: branch, x, y, optional target_rung and priority), "stop_work" (branch, x, y), "levy" (level:
-// none|low|normal|high) or "scout" (range). The band names its tribe; refused `band_not_in_tribe`
-// otherwise.
+// none|low|normal|high), "scout" (range), "approve_proposal" or "defer_proposal" (key: the tribe leader's
+// proposal, #863). The band names its tribe; refused `band_not_in_tribe` otherwise.
 message TribeOrderCommand {
   uint32 faction_id = 1;
   uint64 band_id = 2;
@@ -485,6 +485,8 @@ message TribeOrderCommand {
   optional string priority = 8;
   string level = 9;
   uint32 range = 10;
+  // The proposal key of `approve_proposal` / `defer_proposal` (#863).
+  string key = 11;
 }
 
 // Travel a band toward a target tile at band_move_tiles_per_turn/turn.

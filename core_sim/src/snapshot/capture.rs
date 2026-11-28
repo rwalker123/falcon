@@ -176,6 +176,9 @@ pub struct SnapshotContext<'w> {
     /// the own cohort rows. `Option` so a hand-rolled capture world that never installed it
     /// publishes the defaults.
     pub tribes: Option<Res<'w, crate::tribe::TribeRegistry>>,
+    /// What each tribe's leader proposes now (`crate::tribe_proposals`), published on every member
+    /// band's row. `Option` for the same reason as `tribes`.
+    pub tribe_proposals: Option<Res<'w, crate::tribe_proposals::TribeProposalBook>>,
     pub supply_membership: Res<'w, SupplyNetworkMembership>,
     /// The supply-network tuning — read for the base of a band's **ferry reach**
     /// ([`crate::carry::move_ferry_reach_tiles`]), echoed on every cohort. `Option` so a
@@ -2831,6 +2834,7 @@ pub fn capture_snapshot(
         settlement_stages,
         leadership_config,
         tribes,
+        tribe_proposals,
         supply_membership,
         supply_network,
         hearts,
@@ -3522,6 +3526,7 @@ pub fn capture_snapshot(
                                     &band_names,
                                     &band_sizes,
                                     settlement_stages.as_deref(),
+                                    tribe_proposals.as_deref(),
                                 )
                             })
                         })

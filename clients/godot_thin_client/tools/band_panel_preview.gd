@@ -7448,20 +7448,17 @@ func _assert_tribe_scout_card() -> void:
 	if card == null:
 		_fail("tribe scout card: no Scout card renders")
 		return
-	_assert_band_panel("tribe scout card: the stepper reads the TRIBE's +%d, not the row's +%d"
+	_assert_band_panel("tribe scout card: the range is READ-ONLY and reads the TRIBE's +%d, not the row's +%d - set by the tribe"
 			% [TRIBE_SCOUT_RANGE, TRIBE_SCOUT_OWN_RANGE],
-		_find_label_with_text(card, HudWorkVocab.SCOUT_RANGE_VALUE_FORMAT % TRIBE_SCOUT_RANGE) != null)
+		_find_label_with_text(card, HudTribeVocab.SCOUT_READONLY_FORMAT % TRIBE_SCOUT_RANGE) != null)
+	_assert_band_panel("...with no stepper on a member's card (the tribe's page owns it)",
+		_find_button_with_tooltip(card, HudWorkVocab.SCOUT_RANGE_FARTHER_ARIA) == null
+		and _find_button_with_tooltip(card, HudWorkVocab.SCOUT_RANGE_LESS_ARIA) == null)
 	_assert_band_panel("...and the card says it is the tribe's range",
 		_find_label_with_text(card, HudWorkVocab.SCOUT_TRIBE_LINE_FORMAT % "2 scouts") != null)
 	var tip := _scout_tooltip_of(card)
 	_assert_band_panel("...and the hover names the tribe - \"%s\"" % tip.replace("\n", " | "),
 		tip.contains(HudWorkVocab.SCOUT_TRIBE_TOOLTIP_FORMAT % TRIBE_SCOUT_NAME))
-	var farther := _find_button_with_tooltip(card, HudWorkVocab.SCOUT_RANGE_FARTHER_ARIA)
-	var sent := _emitted_tribe_scout_line(farther) if farther != null else ""
-	_assert_band_panel("...and \"Scout farther\" sends `tribe_scout` at +%d - \"%s\"" % [TRIBE_SCOUT_RANGE + 1, sent],
-		sent.begins_with("tribe_scout ") and sent.ends_with(" %d" % (TRIBE_SCOUT_RANGE + 1)))
-	_assert_band_panel("...addressed by this band's own id - \"%s\"" % sent,
-		sent.contains(" %d " % int(_hud._band_labor.panel_band().get("band_id", -1))))
 	card = _find_role_card(HudWorkVocab.SCOUT_CARD_TITLE)
 	var picker := _find_meta_control(card, KitRoster.KIT_PICKER_META) as OptionButton
 	if picker != null:

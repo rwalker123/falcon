@@ -76,6 +76,10 @@ const HudStyle = preload("res://src/scripts/ui/HudStyle.gd")
 signal closed
 ## A band was picked out of the dropdown, by entity.
 signal band_selected(entity: int)
+## The tribe's entry was picked out of the dropdown, by `tribe_id`.
+signal tribe_selected(tribe_id: int)
+## The fold beside the tribe's entry was pressed.
+signal tribe_fold_toggled
 ## An arrow was pressed: -1 walks back, +1 walks forward.
 signal cycle_requested(delta: int)
 ## Make (count 1) or a suggestion's Queue (its whole count) was pressed —
@@ -112,6 +116,12 @@ const PAYLOAD_BAND_LABEL := "band_label"
 ## there is exactly one player band — and that is the shipped convention, not a bug.
 const PAYLOAD_BAND_INDEX := "band_index"
 const PAYLOAD_BAND_COUNT := "band_count"
+## `true` while the picker lists a tribe (so the fold button shows) and whether its fold is open.
+const PAYLOAD_TRIBE_FOLD := "tribe_fold"
+const PAYLOAD_TRIBE_FOLD_OPEN := "tribe_fold_open"
+## The member cohort dicts of the tribe whose entry is picked, in `tribe_member_names` order; empty while a
+## band's own bench shows. When it is not empty the body is `CraftingTribeView`'s and the bench is not drawn.
+const PAYLOAD_TRIBE_MEMBERS := "tribe_members"
 ## `[{label, entity}]`, in roster order.
 const PAYLOAD_BAND_OPTIONS := "band_options"
 const PAYLOAD_MATERIALS := "materials"
@@ -129,6 +139,10 @@ const PAYLOAD_IDLE_WORKERS := "idle_workers"
 var _card: PanelContainer = null
 var _scroll: ScrollContainer = null
 var _body: VBoxContainer = null
+## The materials rail's padded host and the hairline beside it: hidden while a tribe's entry is picked,
+## since the tribe has no bench and no rail of its own.
+var _rail_host: Control = null
+var _seam: Control = null
 var _header: HBoxContainer = null
 var _rail: VBoxContainer = null
 var _main: VBoxContainer = null
@@ -264,9 +278,11 @@ func _ready() -> void:
 	_rail.custom_minimum_size = Vector2(HudCraftingVocab.RAIL_WIDTH, 0.0)
 	_rail.size_flags_horizontal = Control.SIZE_FILL
 	_rail.add_theme_constant_override("separation", 0)
-	zones.add_child(_wrap_padded(_rail, HudCraftingVocab.RAIL_PADDING_H, HudCraftingVocab.RAIL_PADDING_V))
+	_rail_host = _wrap_padded(_rail, HudCraftingVocab.RAIL_PADDING_H, HudCraftingVocab.RAIL_PADDING_V)
+	zones.add_child(_rail_host)
 
 	var seam := Panel.new()
+	_seam = seam
 	seam.custom_minimum_size = Vector2(HudCraftingVocab.COLUMN_SEPARATOR_THICKNESS, 0.0)
 	seam.add_theme_stylebox_override("panel", HudStyle.hairline_stylebox())
 	seam.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -297,10 +313,16 @@ func render(payload: Dictionary) -> void:
 	_popup_anchor = null
 	_reconcile_recipe_view(payload)
 	_build_header(payload)
-	_build_rail(payload)
-	_build_suggestions(payload)
-	_build_bench(payload)
-	_build_ledger(payload)
+	var tribe_members: Array = payload.get(PAYLOAD_TRIBE_MEMBERS, [])
+	_rail_host.visible = tribe_members.is_empty()
+	_seam.visible = tribe_members.is_empty()
+	if not tribe_members.is_empty():
+		_build_tribe_body(tribe_members)
+	else:
+		_build_rail(payload)
+		_build_suggestions(payload)
+		_build_bench(payload)
+		_build_ledger(payload)
 	# **VISIBLE BEFORE THE FIT, and that is load-bearing**: `Container._sort_children` early-returns
 	# on a hidden subtree, so a card kept hidden until it had been measured would never lay its
 	# content out and would measure the unwrapped lower bound forever.
@@ -412,20 +434,46 @@ func _build_header(payload: Dictionary) -> void:
 
 	var options: Array = payload.get(PAYLOAD_BAND_OPTIONS, [])
 	var entries: Array = []
+	var selected_option := HudWidgets.NO_ENTRY_SELECTED
+	var showing_tribe := not (payload.get(PAYLOAD_TRIBE_MEMBERS, []) as Array).is_empty()
+	var showing_entity := int((payload.get(PAYLOAD_BAND, {}) as Dictionary).get("entity", -1))
 	for option_variant in options:
 		if not (option_variant is Dictionary):
 			continue
 		var option: Dictionary = option_variant
 		var entity := int(option.get("entity", -1))
+		var tribe_id := int(option.get("tribe_id", HudTribeVocab.NO_TRIBE))
+		var is_tribe := tribe_id != HudTribeVocab.NO_TRIBE
+		if (is_tribe and showing_tribe and String(option.get("label", "")) == String(payload.get(PAYLOAD_BAND_LABEL, ""))) \
+				or (not is_tribe and not showing_tribe and entity == showing_entity):
+			selected_option = entries.size()
 		entries.append({
 			"label": String(option.get("label", "")),
-			"on_pick": func() -> void: band_selected.emit(entity),
+			"indent": int(option.get("indent", 0)),
+			"on_pick": (func() -> void: tribe_selected.emit(tribe_id)) if is_tribe \
+				else (func() -> void: band_selected.emit(entity)),
 		})
-	var picker := HudWidgets.build_option_picker(entries, maxi(index - 1, 0),
+	var picker := HudWidgets.build_option_picker(entries, selected_option,
 		String(payload.get(PAYLOAD_BAND_LABEL, "")), HudCraftingVocab.BAND_PICKER_TOOLTIP)
+	for i in range(entries.size()):
+		if int((entries[i] as Dictionary)["indent"]) > 0:
+			picker.get_popup().set_item_indent(i, int((entries[i] as Dictionary)["indent"]))
 	picker.size_flags_horizontal = Control.SIZE_FILL
-	picker.custom_minimum_size = Vector2(HudCraftingVocab.BAND_PICKER_MIN_WIDTH, 0.0)
+	# Wide enough for the longest entry (a tribe's name is longer than a band's), measured off the font.
+	var picker_font := picker.get_theme_font("font")
+	var picker_font_size := picker.get_theme_font_size("font_size")
+	var widest := 0.0
+	for entry in entries:
+		widest = maxf(widest, picker_font.get_string_size(String((entry as Dictionary)["label"]),
+			HORIZONTAL_ALIGNMENT_LEFT, -1.0, picker_font_size).x)
+	picker.custom_minimum_size = Vector2(maxf(HudCraftingVocab.BAND_PICKER_MIN_WIDTH,
+		widest + HudTribeVocab.PICKER_TEXT_PADDING), 0.0)
 	field.add_child(picker)
+	if bool(payload.get(PAYLOAD_TRIBE_FOLD, false)):
+		var fold_open := bool(payload.get(PAYLOAD_TRIBE_FOLD_OPEN, false))
+		field.add_child(TribePage.build_fold_button(fold_open,
+			HudTribeVocab.PICKER_FOLD_OPEN_TIP if fold_open else HudTribeVocab.PICKER_FOLD_CLOSED_TIP,
+			func() -> void: tribe_fold_toggled.emit()))
 
 	var nxt := _icon_button(HudCraftingVocab.CYCLE_NEXT_GLYPH, HudCraftingVocab.CYCLE_NEXT_TOOLTIP)
 	nxt.disabled = count <= 1
@@ -447,6 +495,28 @@ func _build_header(payload: Dictionary) -> void:
 	var close := _icon_button(HudCraftingVocab.CLOSE_GLYPH, HudCraftingVocab.CLOSE_TOOLTIP)
 	close.pressed.connect(func() -> void: closed.emit())
 	_header.add_child(close)
+
+# ---- the tribe's entry ------------------------------------------------------
+
+## **THE TRIBE HAS NO BENCH**: the body is `CraftingTribeView.build(members)` (#864) where that script exists,
+## else one placeholder line. The view is loaded by path so this panel never depends on a script that may
+## not be in the tree.
+func _build_tribe_body(members: Array) -> void:
+	var view: Control = null
+	if ResourceLoader.exists(HudTribeVocab.CRAFTING_VIEW_PATH):
+		var typed: Array[Dictionary] = []
+		for member in members:
+			typed.append(member as Dictionary)
+		var script: Variant = load(HudTribeVocab.CRAFTING_VIEW_PATH)
+		if script != null:
+			view = script.build(typed) as Control
+	if view != null:
+		view.set_meta(HudTribeVocab.CRAFTING_TRIBE_VIEW_META, true)
+		_main.add_child(view)
+		return
+	var line := HudWidgets.alloc_hint_label(HudTribeVocab.CRAFTING_NO_BENCH)
+	line.set_meta(HudTribeVocab.CRAFTING_PLACEHOLDER_META, true)
+	_main.add_child(line)
 
 # ---- the materials rail -----------------------------------------------------
 

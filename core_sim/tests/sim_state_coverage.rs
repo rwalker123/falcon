@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Mutated across turns, and a later turn reads it. A checkpoint that omits any of these produces
 /// a world that diverges from the one it claims to restore.
-const SIM_STATE_RESOURCES: [&str; 62] = [
+const SIM_STATE_RESOURCES: [&str; 63] = [
     "ActiveCrisisLedger",
     // Belief on every place. Only ever grows and outlives the bands whose dead put it there, so
     // nothing rebuilds it — the roads' reason exactly.
@@ -112,6 +112,8 @@ const SIM_STATE_RESOURCES: [&str; 62] = [
     // Every band's chief-proposal state: idle streaks, "Not now" timers, approved builds awaiting
     // completion, pending order-met credits and the offer on the wire. Nothing rebuilds the timers.
     "ChiefProposalBook",
+    // Every tribe's leader-proposal state (#863): "Not now" timers and the offer on the wire.
+    "TribeProposalBook",
     // The peoples whose breeding the head-count freed for good (#691). The latch outlives the
     // population that earned it, so a restored world cannot rebuild it.
     "FreeBreedingPeoples",

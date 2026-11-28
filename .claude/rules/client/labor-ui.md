@@ -8110,7 +8110,8 @@ The Band panel's Scout card is titled **`Scouting range`** (`HudWorkVocab.SCOUT_
 `ROLE_NAME_SCOUT` stays the job's name where a job is named). Its stepper reads **`+N tiles`**
 (`HudWidgets.add_range_stepper`, `-`/`+` by one tile, `0..scouting_range_max` off the cohort) and sends
 `assign_labor ... scout <N> [kit <k>]`, where the count slot is the range in tiles past the band's local
-range; `scout 0` drops the row. The `-`/`+` carry the tooltips `Scout less far` / `Scout farther`, and the
+range; `scout 0` drops the row. (A band in a tribe has no stepper here: its range is the tribe's, read-only,
+`+N tiles · set by the tribe` - see `tribe-panel.md`.) The `-`/`+` carry the tooltips `Scout less far` / `Scout farther`, and the
 kit picker is kept (a kit pick re-states the current RANGE).
 
 - **The scout row is sim-staffed**, so `scout` is in `HudBandLaborState.STAFFED_KINDS`: a pending scout

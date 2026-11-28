@@ -67,6 +67,12 @@ var _room_bounds: Control = null
 var _panel: CraftingPanel = null
 ## The band entity the panel is open on; `NO_BAND_ENTITY` when it is closed.
 var _open_entity: int = NO_BAND_ENTITY
+## **THE TRIBE'S ENTRY IS OPEN** (`.claude/rules/client/tribe-panel.md`): `HudTribeVocab.NO_TRIBE` while a band's
+## own bench shows. The tribe stands in the picker for its members and has no bench of its own, so while it is
+## open `_open_entity` holds its first member (the panel's address) and the body is `CraftingTribeView`'s.
+var _open_tribe_id: int = HudTribeVocab.NO_TRIBE
+## The picker's fold: closed each time the panel opens, opened to reach a member's bench.
+var _tribe_fold_open: bool = false
 
 ## Sentinel for "no band" on the entity handle. `entity` is client-local identity only — every
 ## command below names the band by its DURABLE `band_id` instead.
@@ -121,17 +127,22 @@ func toggle_for(band: Dictionary) -> void:
 	if is_open() and entity == _open_entity:
 		close()
 		return
-	_open_entity = entity
-	render()
+	open_for(band)
 
+## `HudTribeVocab.CRAFTING_OPEN_TRIBE_KEY` on the band says the `\u2692` was pressed from the tribe's own page:
+## the panel then opens on the tribe's entry rather than on the member the page's `panel_band()` happens to be.
 func open_for(band: Dictionary) -> void:
 	if band.is_empty():
 		return
 	_open_entity = int(band.get("entity", NO_BAND_ENTITY))
+	_open_tribe_id = TribeRoster.tribe_id_of(band) \
+		if bool(band.get(HudTribeVocab.CRAFTING_OPEN_TRIBE_KEY, false)) else HudTribeVocab.NO_TRIBE
+	_tribe_fold_open = false
 	render()
 
 func close() -> void:
 	_open_entity = NO_BAND_ENTITY
+	_open_tribe_id = HudTribeVocab.NO_TRIBE
 	if _panel != null and is_instance_valid(_panel):
 		_panel.dismiss()
 
@@ -159,12 +170,25 @@ func render() -> void:
 		return
 	var band: Dictionary = bands[index]
 	_ensure_panel()
+	var position := _picker_position(bands, band)
+	var tribe_members: Array = TribeRoster.members(bands, _open_tribe_id) \
+		if _open_tribe_id != HudTribeVocab.NO_TRIBE else []
+	if _open_tribe_id != HudTribeVocab.NO_TRIBE and tribe_members.is_empty():
+		_open_tribe_id = HudTribeVocab.NO_TRIBE
+	var label := HudFormat.band_name(band)
+	if not tribe_members.is_empty():
+		band = TribeRoster.address_band(tribe_members)
+		label = String(band.get(HudTribeVocab.KEY_TRIBE_NAME, ""))
+		position = _picker_position(bands, band)
 	_panel.render({
 		CraftingPanel.PAYLOAD_BAND: band,
-		CraftingPanel.PAYLOAD_BAND_LABEL: HudFormat.band_name(band),
-		CraftingPanel.PAYLOAD_BAND_INDEX: index + 1,
-		CraftingPanel.PAYLOAD_BAND_COUNT: bands.size(),
+		CraftingPanel.PAYLOAD_BAND_LABEL: label,
+		CraftingPanel.PAYLOAD_BAND_INDEX: position["index"] + 1,
+		CraftingPanel.PAYLOAD_BAND_COUNT: position["count"],
 		CraftingPanel.PAYLOAD_BAND_OPTIONS: _band_options(bands),
+		CraftingPanel.PAYLOAD_TRIBE_FOLD: TribePicker.has_tribe(bands),
+		CraftingPanel.PAYLOAD_TRIBE_FOLD_OPEN: _tribe_fold_open,
+		CraftingPanel.PAYLOAD_TRIBE_MEMBERS: tribe_members,
 		CraftingPanel.PAYLOAD_MATERIALS: _materials,
 		CraftingPanel.PAYLOAD_BAND_LEGEND: _band_legend,
 		CraftingPanel.PAYLOAD_RECIPES: _recipes,
@@ -203,6 +227,8 @@ func _ensure_panel() -> void:
 	_host.add_child(_panel)
 	_panel.closed.connect(close)
 	_panel.band_selected.connect(_on_band_selected)
+	_panel.tribe_selected.connect(_on_tribe_selected)
+	_panel.tribe_fold_toggled.connect(_on_tribe_fold_toggled)
 	_panel.cycle_requested.connect(_on_cycle_requested)
 	_panel.enqueue_requested.connect(_on_enqueue_requested)
 	_panel.order_count_changed.connect(_on_order_count_changed)
@@ -217,10 +243,24 @@ func _ensure_panel() -> void:
 
 func _on_band_selected(entity: int) -> void:
 	_open_entity = entity
+	_open_tribe_id = HudTribeVocab.NO_TRIBE
 	render()
 
-## The arrows WALK the roster; the dropdown JUMPS. Both are dead today — there is exactly one player
-## band — and that is the shipped convention (the actor is always explicit), not a bug.
+## The tribe's entry was picked: the panel shows what the tribe's bands make for it (`CraftingTribeView`).
+func _on_tribe_selected(tribe_id: int) -> void:
+	var members := TribeRoster.members(_band_labor.player_bands(), tribe_id)
+	if members.is_empty():
+		return
+	_open_tribe_id = tribe_id
+	_open_entity = int(TribeRoster.address_band(members).get("entity", NO_BAND_ENTITY))
+	render()
+
+func _on_tribe_fold_toggled() -> void:
+	_tribe_fold_open = not _tribe_fold_open
+	render()
+
+## The arrows WALK the top-level entries (a tribe is one of them); once a MEMBER's bench is up they walk that
+## tribe's members instead. The dropdown JUMPS.
 func _on_cycle_requested(delta: int) -> void:
 	var bands := _band_labor.player_bands()
 	if bands.is_empty():
@@ -228,9 +268,25 @@ func _on_cycle_requested(delta: int) -> void:
 	var index := _index_of(bands, _open_entity)
 	if index < 0:
 		return
-	var next: int = posmod(index + delta, bands.size())
-	_open_entity = int((bands[next] as Dictionary).get("entity", NO_BAND_ENTITY))
-	render()
+	var band: Dictionary = bands[index]
+	if _open_tribe_id == HudTribeVocab.NO_TRIBE and TribeRoster.is_member(band):
+		var members := TribeRoster.members(bands, TribeRoster.tribe_id_of(band))
+		var at := 0
+		for i in range(members.size()):
+			if int((members[i] as Dictionary).get("entity", NO_BAND_ENTITY)) == _open_entity:
+				at = i
+		_open_entity = int((members[posmod(at + delta, members.size())] as Dictionary).get("entity", NO_BAND_ENTITY))
+		render()
+		return
+	var subjects := TribeRoster.subjects(bands)
+	var here := TribeRoster.subject_index_of_tribe(subjects, _open_tribe_id) \
+		if _open_tribe_id != HudTribeVocab.NO_TRIBE \
+		else TribeRoster.subject_index_of_band(subjects, _open_entity)
+	var next: Dictionary = subjects[posmod(here + delta, subjects.size())]
+	if String(next[TribeRoster.SUBJECT_KIND]) == TribeRoster.SUBJECT_TRIBE:
+		_on_tribe_selected(int(next[TribeRoster.SUBJECT_TRIBE_ID]))
+		return
+	_on_band_selected(int((next[TribeRoster.SUBJECT_BAND_DICT] as Dictionary).get("entity", NO_BAND_ENTITY)))
 
 ## **EVERY ORDER HAS A COUNT**, so a count below one is not an order and nothing goes out.
 func _on_enqueue_requested(recipe_id: String, count: int) -> void:
@@ -364,17 +420,32 @@ func _index_of(bands: Array, entity: int) -> int:
 			return i
 	return -1
 
+## The picker's entries: **a tribe stands in for its members** with a fold beside it (`TribePicker`), and a lone
+## band is listed on its own. Each is `{label, entity | tribe_id, indent}`.
 func _band_options(bands: Array) -> Array:
 	var options: Array = []
-	for i in range(bands.size()):
-		if not (bands[i] is Dictionary):
-			continue
-		var band: Dictionary = bands[i]
+	for entry in TribePicker.entries(bands, _tribe_fold_open):
 		options.append({
-			"label": HudFormat.band_name(band),
-			"entity": int(band.get("entity", NO_BAND_ENTITY)),
+			"label": String(entry[TribePicker.ENTRY_LABEL]),
+			"entity": int(entry.get(TribePicker.ENTRY_ENTITY, NO_BAND_ENTITY)),
+			"tribe_id": int(entry.get(TribePicker.ENTRY_TRIBE_ID, HudTribeVocab.NO_TRIBE)),
+			"indent": int(entry[TribePicker.ENTRY_INDENT]),
 		})
 	return options
+
+## `{index, count}` for the `n / N` beside the arrows: of the tribe's members while one member's bench is up,
+## else of the top-level entries.
+func _picker_position(bands: Array, band: Dictionary) -> Dictionary:
+	if _open_tribe_id == HudTribeVocab.NO_TRIBE and TribeRoster.is_member(band):
+		var members := TribeRoster.members(bands, TribeRoster.tribe_id_of(band))
+		for i in range(members.size()):
+			if int((members[i] as Dictionary).get("entity", NO_BAND_ENTITY)) == int(band.get("entity", -2)):
+				return {"index": i, "count": members.size()}
+	var subjects := TribeRoster.subjects(bands)
+	var at := TribeRoster.subject_index_of_tribe(subjects, _open_tribe_id) \
+		if _open_tribe_id != HudTribeVocab.NO_TRIBE \
+		else TribeRoster.subject_index_of_band(subjects, int(band.get("entity", -2)))
+	return {"index": maxi(at, 0), "count": subjects.size()}
 
 func _player_craft_knowledge() -> Array:
 	var tracks: Array = []

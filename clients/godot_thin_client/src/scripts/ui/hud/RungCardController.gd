@@ -26,6 +26,10 @@ signal improvement_requested(payload: Dictionary)
 signal crop_chosen(band: Dictionary, model: Dictionary, species: String)
 signal extend_pen_requested(payload: Dictionary)
 signal unqueue_requested(payload: Dictionary)
+## A tile branch's rung was pressed for a TRIBE (the `Band:` picker named it), so it joins the tribe's
+## shared works instead of one band's row: `{action: "work", faction, band_id, branch, x, y, rung}` - relayed
+## as `HudLayer.tribe_command_requested` and spelled `tribe_work <f> <b> <branch> <x> <y> [<rung>]`.
+signal tribe_work_requested(payload: Dictionary)
 
 var _band_labor: HudBandLaborState = null
 var _topbar: FactionReadouts = null
@@ -276,14 +280,20 @@ func tile_ladder() -> Array[Dictionary]:
 ## renderer and press the deposit track uses. `crew` is the count of bands HOLDING a tile row on it (`tile_rows_held`; not the staffed count) and
 ## `tile_info` the land card's dict, whose `belief` the site gate reads. The press emits
 ## `build <verb> <f> <x> <y>` through `improvement_requested`; no `assign_labor` rides with it.
+## `tribe` is `{}` for a band's own crew, or the tribe-address context `{faction, band_id}` when the card was
+## opened for a tribe: a pressed rung then states a shared work and the stop-building link clears its target.
 func open_tile_track(band: Dictionary, tile_info: Dictionary, branch: String, crew: int,
-        anchor: Control) -> void:
+        anchor: Control, tribe: Dictionary = {}) -> void:
     if tile_ladder().is_empty():
         push_warning("RungCardController: a tile branch's step card was opened with no tile rung " +
             "catalog on the wire -- the track cannot state a single rung")
         return
     var x := int(tile_info.get("x", -1))
     var y := int(tile_info.get("y", -1))
+    # A tribe's shared work is crewed by the levy once it is declared, so the crew gate (some band holding a
+    # row on the tile) cannot stand in front of the press that starts it.
+    if not tribe.is_empty():
+        crew = maxi(crew, HudTileVocab.CREW_DEFAULT)
     var rows := tile_track_rows(band, tile_info, branch, crew)
     if not RungLadder.has_track(rows):
         return
@@ -293,10 +303,13 @@ func open_tile_track(band: Dictionary, tile_info: Dictionary, branch: String, cr
             dismiss()
             # The rung being raised is only followed: the sim refuses a rung already stood at or above.
             if verb != building:
-                _emit_tile_declaration(band, x, y, verb),
+                _emit_tile_declaration(band, x, y, verb, branch, tribe),
         HudWorkVocab.RUNG_TRACK_TITLE, _max_builders_by_rung(),
         func() -> void:
             dismiss()
+            if not tribe.is_empty():
+                _emit_tribe_work(tribe, branch, x, y, "")
+                return
             emit_unqueue(band, {"x": x, "y": y, "herd_id": "", "branch": branch,
                 "material": branch, "kind": HudConst.LABOR_KIND_TILE})))
     _popup.popup(_anchor_rect(anchor))
@@ -320,8 +333,13 @@ func tile_track_rows(band: Dictionary, tile_info: Dictionary, branch: String,
 
 ## `build <verb> <faction> <x> <y>` -- a tile improvement names a bare tile (its crew is the site crew, so
 ## no band token). It carries no `pending_entity`: the declaration lands on the improvement's own meter.
-func _emit_tile_declaration(band: Dictionary, x: int, y: int, verb: String) -> void:
+func _emit_tile_declaration(band: Dictionary, x: int, y: int, verb: String, branch: String = "",
+        tribe: Dictionary = {}) -> void:
     if verb == SourceForecast.IMPROVEMENT_NONE or band.is_empty() or x < 0 or y < 0:
+        return
+    if not tribe.is_empty():
+        # `tribe_work <f> <b> <branch> <x> <y> <branch>:<rung>` - the rung id is the catalog's own key.
+        _emit_tribe_work(tribe, branch, x, y, rung_key_of_verb(branch, verb))
         return
     improvement_requested.emit({
         "faction": int(band.get("faction", HudConst.PLAYER_FACTION_ID)),
@@ -330,6 +348,22 @@ func _emit_tile_declaration(band: Dictionary, x: int, y: int, verb: String) -> v
         "x": x,
         "y": y,
         "herd_id": "",
+    })
+
+## The catalog's rung key (`<branch>:<rung>`) for the rung a verb raises on a tile branch, `""` when the
+## catalog names none.
+func rung_key_of_verb(branch: String, verb: String) -> String:
+    for entry in tile_ladder():
+        if HudDepositVocab.catalog_branch(entry) == branch and HudDepositVocab.catalog_verb(entry) == verb:
+            return HudDepositVocab.catalog_rung_key(entry)
+    return ""
+
+func _emit_tribe_work(tribe: Dictionary, branch: String, x: int, y: int, rung: String) -> void:
+    tribe_work_requested.emit({
+        HudTribeVocab.ACTION_KEY: HudTribeVocab.COMMAND_WORK,
+        "faction": int(tribe.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(tribe.get("band_id", HudConst.NO_BAND_ID)),
+        "branch": branch, "x": x, "y": y, "rung": rung,
     })
 
 ## The rung catalog's builder caps - what the "Take it to..." card reads "up to N builders at once" from.

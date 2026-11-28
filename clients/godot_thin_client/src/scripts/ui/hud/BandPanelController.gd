@@ -61,6 +61,9 @@ signal upkeep_mode_requested(payload: Dictionary)
 # as `tribe_scout <faction> <band> <range>`. `{ faction, band_id, range }`. NOT `assign_labor`, which
 # the sim refuses a tribe member's range change on.
 signal tribe_scout_requested(payload: Dictionary)
+# A tribe-addressed command from the tribe's page (`tribe_work ... stop`, `tribe_levy`), relayed to
+# HudLayer.tribe_command_requested and spelled by `Main.format_tribe_command`. `{action, faction, band_id, ...}`.
+signal tribe_command_requested(payload: Dictionary)
 # The faction page's OPEN BORDERS toggle was pressed (issue #512) — relayed to
 # HudLayer.open_borders_requested and formatted by `Main.format_open_borders`. `{ faction, open }`.
 # `FactionRollup` is static and declares no signal, so the toggle reaches this through the Callable
@@ -354,6 +357,16 @@ var _panel_is_faction: bool = false
 ## (`FACTION_ROW_NONE` for none). One key for BOTH tabs: the narrow shell shows one zone at a time and
 ## the wide shell's two lists are about different things, so a row open in each cannot arise.
 var _faction_open_row: int = FACTION_ROW_NONE
+## **THE PANEL'S SUBJECT IS A TRIBE'S PAGE** (`tribe_id`; `HudTribeVocab.NO_TRIBE` for none) - the faction
+## page's twin: a fact about what this PANEL shows, re-resolved against the roster every snapshot, with
+## `panel_band()` left alone so leaving the page returns to the band the player was reading.
+var _tribe_page_id: int = HudTribeVocab.NO_TRIBE
+## The band ids of the tribe the page last showed, so a tribe that dissolves under the page falls back to
+## its first former member's own panel.
+var _tribe_former_members: Array[int] = []
+## Open band lines on the tribe page: `"<tribe_id>:<band_id>" -> true` (`BandOrdersController._open_folds`' shape).
+var _tribe_open_folds: Dictionary = {}
+var _tribe_scrolls: Dictionary = {}
 
 ## No row expanded. Not `AttentionController.OWNER_NONE` (-1), which is a REAL row on this page — the
 ## faction's own land alerts — so the two sentinels must differ or opening that row is indistinguishable
@@ -588,6 +601,8 @@ func set_rung_card(card: RungCardController) -> void:
         extend_pen_requested.emit(payload))
     card.unqueue_requested.connect(func(payload: Dictionary) -> void:
         unqueue_requested.emit(payload))
+    card.tribe_work_requested.connect(func(payload: Dictionary) -> void:
+        tribe_command_requested.emit(payload))
     # The crop a plant rung commits rides the band's own forage row (`assign_labor`'s `species` token),
     # ahead of the declaration, so the overlay the declaration writes is the one the board reads.
     card.crop_chosen.connect(func(band: Dictionary, model: Dictionary, species: String) -> void:
@@ -782,7 +797,7 @@ func set_action_pip(id: StringName, count: int) -> void:
 func show_work_tab(band_entity: int) -> void:
     if _panel == null:
         return
-    if band_entity >= 0 and (_panel_is_faction \
+    if band_entity >= 0 and (_is_aggregate_page() \
             or int(_band_labor.panel_band().get("entity", -1)) != band_entity):
         jump_to_band_entity(band_entity)
     _panel.set_active_tab(BandCityPanel.ZONE_WORK)
@@ -1088,7 +1103,7 @@ func refresh_connections() -> void:
 ## **THE PEOPLES TAB'S BADGE**: the treaty proposals waiting on this band's answer (hot: the window is one
 ## turn), else how many ties the band holds, parked ones included; nothing at none.
 func _push_peoples_badge(band_id: int) -> void:
-    if _panel == null or _panel_is_faction:
+    if _panel == null or _is_aggregate_page():
         return
     var treaty := DealingsRoster.treaty_badge(band_id, _band_labor)
     if bool(treaty["hot"]):
@@ -1143,7 +1158,7 @@ func refresh_standing_links() -> void:
 ## The Trade tab's badge: what waits on THIS band's answer (hot: the window is one turn), else how many
 ## trade items it waits on, and nothing at none.
 func _push_trade_badge(band_id: int) -> void:
-    if _panel == null or _panel_is_faction:
+    if _panel == null or _is_aggregate_page():
         return
     var badge := DealingsRoster.badge(band_id, _band_labor)
     _panel.set_tab_badge(BandCityPanel.ZONE_TRADE, String(badge["text"]), bool(badge["hot"]))
@@ -1181,7 +1196,7 @@ func focus_dealings(band_id: int) -> void:
     var band := _band_labor.player_band_by_band_id(band_id)
     if band.is_empty() or _panel == null:
         return
-    if _panel_is_faction or int(_band_labor.panel_band().get("band_id", HudConst.NO_BAND_ID)) != band_id:
+    if _is_aggregate_page() or int(_band_labor.panel_band().get("band_id", HudConst.NO_BAND_ID)) != band_id:
         jump_to_band_entity(int(band.get("entity", -1)))
     var treaty_only := DealingsRoster.awaiting_count(band_id, _band_labor) == 0 \
         and DealingsRoster.treaty_awaiting_count(band_id, _band_labor) > 0
@@ -1733,12 +1748,18 @@ func _build_role_card(band: Dictionary, role_name: String, hint: String, kind: S
     stepper.alignment = BoxContainer.ALIGNMENT_CENTER
     stepper.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
     var range_value: Label = null
-    if is_scout:
+    if is_scout and HudBandLaborState.in_tribe(band):
+        # **A MEMBER'S SCOUTING RANGE IS THE TRIBE'S AND IS READ-ONLY HERE** - it is stated on the tribe's page
+        # (`TribePage`), whose stepper emits `tribe_scout_requested` through `_emit_tribe_scout`.
+        range_value = Label.new()
+        range_value.text = HudTribeVocab.SCOUT_READONLY_FORMAT % workers
+        range_value.add_theme_color_override("font_color", HudStyle.INK if workers > 0 else HudStyle.INK_FAINT)
+        range_value.set_meta(HudTribeVocab.SCOUT_READONLY_META, workers)
+        range_value.set_meta(HudWorkVocab.SCOUT_RANGE_VALUE_META, true)
+        stepper.add_child(range_value)
+    elif is_scout:
         range_value = HudWidgets.add_range_stepper(stepper, workers, HudBandLaborState.scouting_range_max(band),
             func(n: int) -> void:
-                if HudBandLaborState.in_tribe(band):
-                    _emit_tribe_scout(band, n)
-                    return
                 _emit_assign_labor(
                     band, kind, n, -1, -1, "", SourceForecast.DEFAULT_HARVEST_FLOOR,
                     "", SourceForecast.IMPROVEMENT_NONE, commanded_kit_id))
@@ -1869,7 +1890,7 @@ func _on_zones_resized() -> void:
     # rather than measured against the box — so a resize is simply a re-render. Falling through would
     # compare against the tier the last BAND render left behind and, on a match, re-page a work host
     # this page does not own.
-    if _panel_is_faction:
+    if _is_aggregate_page():
         rerender()
         return
     # **A SHELL FLIP MOVES THE TRADE CONTENT** between its own zone and the foot of Parties, so it is a
@@ -3087,6 +3108,7 @@ func _build_band_improvement_row(band: Dictionary, model: Dictionary) -> PanelCo
     title.add_theme_color_override("font_color", HudStyle.INK)
     title.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(title)
+    _add_for_tribe_mark(line, band, model)
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"])),
         HudWorkVocab.SITE_CREW_LINE_META, null,
         HudStyle.WARN if bool(model.get("rung_warn", false)) else HudStyle.INK_DIM))
@@ -3113,6 +3135,36 @@ func _build_band_improvement_row(band: Dictionary, model: Dictionary) -> PanelCo
     # A READ-ONLY crew (the sim's), on the same strip every other work row wears.
     body.add_child(_build_row_strip(band, model))
     return row
+
+## **THE `for the tribe` MARK** - a row whose crew the tribe levied (`for_tribe` on its labor row), marked
+## beside its name on every Band panel: a member's own Work tab and the tribe page's opened lines alike.
+func _add_for_tribe_mark(line: HBoxContainer, band: Dictionary, model: Dictionary) -> void:
+    if not _row_is_for_tribe(band, model):
+        return
+    var mark := Label.new()
+    mark.text = HudTribeVocab.FOR_TRIBE_MARK
+    mark.tooltip_text = HudTribeVocab.FOR_TRIBE_TOOLTIP
+    mark.mouse_filter = Control.MOUSE_FILTER_PASS
+    mark.add_theme_font_size_override("font_size", HudTribeVocab.MARK_FONT_SIZE)
+    mark.add_theme_color_override("font_color", HudStyle.SIGNAL_DEEP)
+    mark.set_meta(HudTribeVocab.FOR_TRIBE_MARK_META, true)
+    line.add_child(mark)
+
+func _row_is_for_tribe(band: Dictionary, model: Dictionary) -> bool:
+    var assignment: Dictionary = {}
+    var x := int(model.get("x", -1))
+    var y := int(model.get("y", -1))
+    match String(model.get("kind", "")):
+        SourceForecast.LABOR_KIND_FORAGE:
+            assignment = _band_labor.forage_assignment_of(band, x, y)
+        SourceForecast.LABOR_KIND_HUNT:
+            assignment = _band_labor.hunt_assignment_of(band, String(model.get("herd_id", "")))
+        HudConst.LABOR_KIND_EXTRACT:
+            assignment = _band_labor.extract_assignment_of(band, x, y, String(model.get("material", "")))
+        HudConst.LABOR_KIND_TILE, HudConst.LABOR_KIND_BAND:
+            var held: Variant = model.get("assignment", {})
+            assignment = held if held is Dictionary else {}
+    return bool(assignment.get(HudTribeVocab.ROW_FOR_TRIBE, false))
 
 ## **THE STOP BUTTON OF A BAND IMPROVEMENT'S BUILD** - the Build button's slot while a build is declared.
 ## Ghost chrome in DANGER ink, like the panel's other destructive controls; no confirm, since `unqueue`
@@ -3175,6 +3227,7 @@ func _build_tile_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     title.add_theme_color_override("font_color", HudStyle.INK)
     title.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(title)
+    _add_for_tribe_mark(line, band, model)
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(String(model["rung_name"]))))
     # Line three of a built store: what the pit holds (the row's pill-line slot is free on a tile row).
     var stored := HudWorkVocab.stored_line(improvement)
@@ -3318,6 +3371,7 @@ func _build_extract_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     title.mouse_filter = Control.MOUSE_FILTER_IGNORE
     title.set_meta(HudWorkVocab.WORKINGS_ROW_NAME_META, title.text)
     line.add_child(title)
+    _add_for_tribe_mark(line, band, model)
     var rung_name := HudDepositVocab.ladder_rung_name(ladder, HudDepositVocab.rung_of(deposit))
     var floor := row_floor
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
@@ -3534,7 +3588,7 @@ func _build_row_strip(band: Dictionary, row: Dictionary, deposit: Dictionary = {
 
 ## What the strip's two buttons do: both open the SAME rung card, from a row or from a sheet.
 func strip_handlers(band: Dictionary, row: Dictionary, deposit: Dictionary = {},
-        wire_source: Dictionary = {}) -> Dictionary:
+        wire_source: Dictionary = {}, tribe: Dictionary = {}) -> Dictionary:
     var source := _bare_patch_of(wire_source) \
         if String(row.get("kind", "")) == SourceForecast.LABOR_KIND_FORAGE else wire_source
     if String(row.get("kind", "")) == HudConst.LABOR_KIND_TILE:
@@ -3544,7 +3598,7 @@ func strip_handlers(band: Dictionary, row: Dictionary, deposit: Dictionary = {},
         return {
             "on_ladder": func(anchor: Control) -> void:
                 _rung.open_tile_track(band, {"x": tile_x, "y": tile_y}, tile_branch,
-                    _band_labor.tile_rows_held(tile_x, tile_y, tile_branch), anchor),
+                    _band_labor.tile_rows_held(tile_x, tile_y, tile_branch), anchor, tribe),
             "on_ring": func(_anchor: Control) -> void: pass,
         }
     return {
@@ -3947,6 +4001,8 @@ func _capture_carried_scrolls(subject: int) -> void:
     var live := {
         HudWorkVocab.BAND_ZONE_SCROLL_NAME: _band_zone_scroll,
         HudWorkVocab.PARTIES_LIST_NAME: _parties_scroll,
+        HudTribeVocab.WORK_SCROLL_NAME: _tribe_scrolls.get(HudTribeVocab.WORK_SCROLL_NAME),
+        HudTribeVocab.BAND_SCROLL_NAME: _tribe_scrolls.get(HudTribeVocab.BAND_SCROLL_NAME),
         HudConnectionsVocab.LIST_NAME: _find_scroll_in(_connections_block, HudConnectionsVocab.LIST_NAME),
         TradeZoneController.TAB_SCROLL_NAME:
             _find_scroll_in(_trade_block, TradeZoneController.TAB_SCROLL_NAME),
@@ -4276,6 +4332,7 @@ func _build_work_row(band: Dictionary, model: Dictionary) -> PanelContainer:
     label.add_theme_font_size_override("font_size", HudWorkVocab.WORK_ROW_FONT_SIZE)
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     line.add_child(label)
+    _add_for_tribe_mark(line, band, model)
     # **LINE TWO NAMES THE RUNG THE SITE STANDS ON**, and nothing else: covered keeping says nothing,
     # a short one is the strip's `⚠`, and the accounts line below says what the take produces.
     col.add_child(_build_site_crew_line(HudWorkVocab.site_crew_line(
@@ -8740,20 +8797,20 @@ func _register_band_verbs() -> void:
         var mission := String(verb[HudComposeVocab.VERB_KEY_MISSION])
         _panel.register_action(StringName(verb[HudComposeVocab.VERB_KEY_ID]),
             String(verb[HudComposeVocab.VERB_KEY_GLYPH]), String(verb[HudComposeVocab.VERB_KEY_TOOLTIP]),
-            func() -> bool: return not _panel_is_faction and verb_enabled(mission, _band_labor.panel_band()),
+            func() -> bool: return not _is_aggregate_page() and verb_enabled(mission, _band_labor.panel_band()),
             HudSprites.for_mark(String(verb[HudComposeVocab.VERB_KEY_MARK])), i,
             # The face's hover follows the same gate: the band's reasons LEAD it while it is greyed,
             # and the faction subject — the predicate's other conjunct — says so in its own words.
             func() -> String: return HudWidgets.disabled_tooltip(
                     PackedStringArray([HudComposeVocab.VERB_BLOCKED_FACTION_VIEW]),
                     String(verb[HudComposeVocab.VERB_KEY_TOOLTIP])) \
-                if _panel_is_faction else verb_tooltip(mission, _band_labor.panel_band()))
+                if _is_aggregate_page() else verb_tooltip(mission, _band_labor.panel_band()))
 
 ## A press on the panel's action bar. Only the verbs are answered here — the `⚒` / `▲` have their own
 ## named relays (`crafting_requested` / `knowledge_requested`).
 func _on_panel_action_invoked(id: StringName) -> void:
     var verb := HudComposeVocab.verb_for_id(id)
-    if verb.is_empty() or _panel_is_faction:
+    if verb.is_empty() or _is_aggregate_page():
         return
     dispatch_verb(String(verb[HudComposeVocab.VERB_KEY_MISSION]), _band_labor.panel_band())
 
@@ -9052,6 +9109,7 @@ func render_band(unit: Dictionary) -> void:
     # nothing, but the player may have opened a sheet, cycled away to read the rollup and cycled back.
     if _panel_is_faction:
         _panel_is_faction = false
+    _tribe_page_id = HudTribeVocab.NO_TRIBE
     # A pending verb is FOR a band (a quarry's travel time, a party's idle ceiling and a manifest's
     # stores are all that band's), so the panel moving to ANOTHER band ends it. Reset inline rather than
     # through `close_verb_form`, which re-renders, and this IS the render.
@@ -9105,7 +9163,8 @@ func render_band(unit: Dictionary) -> void:
     var index := _index_of_player_band(int(_band_labor.panel_band().get("entity", -1)))
     _panel.set_header(stage_id, glyph, HudFormat.band_name(_band_labor.panel_band()), stage_label,
         _panel_position_label(_band_labor.panel_band()))
-    _panel.set_cycler(_cycler_index_of_band(index), _cycler_count())
+    _push_band_cycler(_band_labor.panel_band(), index)
+    _push_breadcrumb(_band_labor.panel_band())
     # A band HAS a tile, and its `band` zone is a band's, so both header affordances come back on. Both
     # setters early-out on an unchanged value, so a band-to-band cycle costs nothing.
     _panel.set_subject_jumpable(true)
@@ -9129,6 +9188,7 @@ func render_faction() -> void:
     if _panel == null or _band_labor.player_bands().is_empty():
         return
     _panel_is_faction = true
+    _tribe_page_id = HudTribeVocab.NO_TRIBE
     _capture_carried_scrolls(HudWorkVocab.SCROLL_CARRY_FACTION_SUBJECT)
     # A pending verb belongs to the BAND it was pressed for, so leaving that band for this page ends it
     # — the identical rule `render_band` applies to a band-to-band cycle.
@@ -9174,10 +9234,146 @@ func render_faction() -> void:
     _panel.set_header("", HudFormat.FACTION_PAGE_GLYPH, HudFormat.faction_page_title(),
         HudFormat.faction_page_subtitle(_band_labor.player_bands().size()), "")
     _panel.set_cycler(FACTION_CYCLER_INDEX, _cycler_count())
+    _push_breadcrumb({})
     # A faction has no tile to jump to. (The narrow shell's first tab reads `Faction` rather than
     # `Band` because `FACTION_ZONE_LAYOUT` says so — a subject names its own zone labels.)
     _panel.set_subject_jumpable(false)
     _panel.set_shown(true)
+
+## The tribe page's two zones: the tribe's own tab (`band` key), then the Work tab.
+const TRIBE_ZONE_LAYOUT: Array[Dictionary] = [
+    {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_BAND,
+        BandCityPanel.ZONE_SPEC_LABEL: HudTribeVocab.ZONE_TAB_TRIBE,
+        BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_BAND_WIDTH},
+    {BandCityPanel.ZONE_SPEC_KEY: BandCityPanel.ZONE_WORK,
+        BandCityPanel.ZONE_SPEC_LABEL: HudWorkVocab.ZONE_TAB_WORK,
+        BandCityPanel.ZONE_SPEC_WIDTH: BandCityPanel.ZONE_WIDTH_EXPAND},
+]
+
+## **RENDER A TRIBE'S PAGE** (`.claude/rules/client/tribe-panel.md`): the same panel, one scale up from a
+## band. The builders are `TribePage`'s; this function is the subject switch the faction page also makes -
+## leave the band, end a pending verb, drop the inspector - and `panel_band()` is left ALONE so leaving
+## the page returns to the band the player was reading. No members left means nothing to show.
+func render_tribe(tribe_id: int) -> void:
+    if _panel == null:
+        return
+    var bands := _band_labor.player_bands()
+    var members := TribeRoster.members(bands, tribe_id)
+    if members.is_empty():
+        return
+    _tribe_page_id = tribe_id
+    _panel_is_faction = false
+    _tribe_former_members.clear()
+    for band in members:
+        _tribe_former_members.append(int((band as Dictionary).get("band_id", HudConst.NO_BAND_ID)))
+    _capture_carried_scrolls(HudWorkVocab.SCROLL_CARRY_TRIBE_SUBJECT)
+    if _compose.has_verb():
+        _reset_verb_state()
+        _targeting.disarm_verb_picks()
+    _panel.refresh_actions()
+    _trade.dismiss()
+    close_work_inspector()
+    _work_zone_host = null
+    _work_zone_band = {}
+    var page := TribePage.new()
+    page.labor = _band_labor
+    page.members = members
+    page.tribe_id = tribe_id
+    page.tribe_name = String((members[0] as Dictionary).get(HudTribeVocab.KEY_TRIBE_NAME, ""))
+    page.name_of = func(band: Dictionary) -> String: return HudFormat.band_name(band)
+    page.open_folds = _tribe_open_folds
+    page.on_changed = rerender
+    page.on_open_band = func(band: Dictionary) -> void: _select_band_on_map(band)
+    page.on_scout = func(tiles: int) -> void: _emit_tribe_scout(TribeRoster.address_band(members), tiles)
+    page.on_levy = func(token: String) -> void: _emit_tribe_command({
+        HudTribeVocab.ACTION_KEY: HudTribeVocab.COMMAND_LEVY, "level": token}, members)
+    page.on_stop = func(work: Dictionary) -> void: _emit_tribe_command({
+        HudTribeVocab.ACTION_KEY: HudTribeVocab.COMMAND_STOP,
+        "branch": String(work.get(HudTribeVocab.WORK_BRANCH, "")),
+        "x": int(work.get(HudTribeVocab.WORK_X, -1)), "y": int(work.get(HudTribeVocab.WORK_Y, -1))}, members)
+    page.build_rows = _build_tribe_band_rows
+    page.branch_label = _tribe_branch_label
+    page.rung_line = _tribe_rung_line
+    page.make_scroll = _build_tribe_zone_scroll
+    _panel.set_zone_layout(TRIBE_ZONE_LAYOUT)
+    _panel.set_zones({
+        BandCityPanel.ZONE_BAND: HudWidgets.wrap_zone(page.build_band_zone()),
+        BandCityPanel.ZONE_WORK: HudWidgets.wrap_zone(page.build_work_zone()),
+    })
+    var first: Dictionary = members[0]
+    var anchor := TribeRoster.gathering_place(members)
+    var subtitle := HudTribeVocab.SUBTITLE_NO_ANCHOR_FORMAT % members.size() if anchor.x < 0 \
+        else HudTribeVocab.SUBTITLE_FORMAT % [members.size(), anchor.x, anchor.y]
+    _panel.set_header(String(first.get(HudTribeVocab.KEY_STAGE_ID, "")),
+        String(first.get(HudTribeVocab.KEY_STAGE_ICON, HudFormat.FACTION_PAGE_GLYPH)),
+        HudTribeVocab.TITLE_FORMAT % page.tribe_name, subtitle, "")
+    _panel.set_cycler(_cycler_index(), _cycler_count())
+    _push_breadcrumb({})
+    _panel.set_subject_jumpable(false)
+    var work_count := TribeRoster.works(members).size()
+    _panel.set_tab_badge(BandCityPanel.ZONE_BAND, "", false)
+    _panel.set_tab_badge(BandCityPanel.ZONE_WORK, str(work_count) if work_count > 0 else "", false)
+    _panel.set_shown(true)
+
+## A tribe-page zone's scroll host: the sanctioned vertical-only scroll, `null` in the no-dock host.
+func _build_tribe_zone_scroll(scroll_name: String) -> ScrollContainer:
+    if _panel == null:
+        return null
+    var scroll := ScrollContainer.new()
+    scroll.name = scroll_name
+    scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+    # **NO MEASURED HEIGHT, ON PURPOSE.** The band zone declares its box as a minimum and corrects it on
+    # `zones_resized`, because `zone_size()` is read while the header is still settling and a minimum taller than
+    # the host pushes the scroll's bottom (and so the last rows) past the panel. This scroll simply FILLS its
+    # zone host - bounded by the panel's own layout on every dock edge - so there is no number to go stale.
+    scroll.custom_minimum_size = Vector2.ZERO
+    _carry_scroll_in(scroll, scroll_name, func() -> bool: return is_instance_valid(scroll))
+    _tribe_scrolls[scroll_name] = scroll
+    return scroll
+
+## One member band's rows on the tribe page - exactly the Work zone's sections for that band, through the
+## SAME producers and row builders, so a row drawn here and on the band's own page cannot differ.
+func _build_tribe_band_rows(band: Dictionary) -> Control:
+    var models := _work_source_models(band)
+    var extract_models := _extract_source_models(band)
+    var tile_models := _tile_source_models(band)
+    tile_models.append_array(_band_improvement_models(band))
+    var roster_models := _roadwork_roster_models(band)
+    var roster_unseen := _roadwork_roster_unseen(band, roster_models.size())
+    _sort_work_models(models)
+    var items := _work_section_items(band, models, extract_models, roster_models, roster_unseen, tile_models)
+    var col := VBoxContainer.new()
+    col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    col.add_theme_constant_override("separation", 0)
+    for item in items:
+        col.add_child((item as Dictionary)[WORK_ITEM_NODE] as Control)
+    return col
+
+func _tribe_branch_label(branch: String) -> String:
+    return HudRouteVocab.branch_name(_topbar.ladder_branches() if _topbar != null else [], branch)
+
+## The rung line of a shared work: the target rung's name, or - when the work keeps what stands - the
+## improvement the tile holds now.
+func _tribe_rung_line(x: int, y: int, branch: String, target_rung: String) -> String:
+    var catalog: Array = _topbar.ladder_rungs() if _topbar != null else []
+    if target_rung != "":
+        return HudRouteVocab.rung_name_in(catalog, target_rung)
+    var held := String(_band_labor.tile_improvement_at(x, y, branch).get("current_rung", ""))
+    return HudRouteVocab.rung_name_in(catalog, held) if held != "" \
+        else HudRouteVocab.branch_root_name(catalog, branch)
+
+## Emit one tribe-addressed command, addressed by the tribe's first member band.
+func _emit_tribe_command(payload: Dictionary, members: Array) -> void:
+    var anchor := TribeRoster.address_band(members)
+    var band_id := int(anchor.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return
+    payload["faction"] = int(anchor.get("faction", HudConst.PLAYER_FACTION_ID))
+    payload["band_id"] = band_id
+    emit_signal("tribe_command_requested", payload)
 
 ## The tab badges for the faction page: the totals its three zones answer, so the narrow shell states
 ## them without the player having to open each tab. `work` counts BANDS rather than sources — this
@@ -9368,6 +9564,9 @@ func rerender() -> void:
     if _panel_is_faction:
         render_faction()
         return
+    if _tribe_page_id != HudTribeVocab.NO_TRIBE:
+        render_tribe(_tribe_page_id)
+        return
     if _band_labor.panel_band().is_empty():
         return
     render_band(_band_labor.panel_band())
@@ -9399,6 +9598,18 @@ func refresh_snapshot() -> void:
     if _panel_is_faction:
         render_faction()
         return
+    if _tribe_page_id != HudTribeVocab.NO_TRIBE:
+        # Re-resolved by `tribe_id`, as `_resolve_panel_band` re-resolves a band by entity. A tribe that
+        # dissolved under the page hands the panel to its first former member's own page.
+        if not TribeRoster.members(_band_labor.player_bands(), _tribe_page_id).is_empty():
+            render_tribe(_tribe_page_id)
+            return
+        _tribe_page_id = HudTribeVocab.NO_TRIBE
+        for band_id in _tribe_former_members:
+            var former := _band_labor.player_band_by_band_id(band_id)
+            if not former.is_empty():
+                render_band(former)
+                return
     render_band(_resolve_panel_band())
 
 ## The band the panel should show: the same one across snapshots (re-fetched live by entity), or
@@ -9436,6 +9647,8 @@ func set_panel(panel: BandCityPanel) -> void:
             _work_sort = stored
     # The panel re-reports its zone box on a shell flip / dock change / collapse / window resize.
     # Re-PAGE the work board on it — the other two zones are unaffected by a box change.
+    if panel != null and not panel.breadcrumb_activated.is_connected(_on_breadcrumb_activated):
+        panel.breadcrumb_activated.connect(_on_breadcrumb_activated)
     if panel != null and not panel.zones_resized.is_connected(_on_zones_resized):
         panel.zones_resized.connect(_on_zones_resized)
     # …and the narrow shell's TAB, which moves what is on screen without moving any box — the one
@@ -9474,6 +9687,11 @@ func _on_crafting_requested() -> void:
     var band := _band_labor.panel_band()
     if band.is_empty():
         return
+    if _tribe_page_id != HudTribeVocab.NO_TRIBE:
+        # From the tribe's own page the panel opens on the tribe's entry (its members' benches one fold down).
+        band = band.duplicate()
+        band[HudTribeVocab.CRAFTING_OPEN_TRIBE_KEY] = true
+        band[HudTribeVocab.KEY_TRIBE_ID] = _tribe_page_id
     emit_signal("crafting_requested", band)
 
 ## The header's `▲`. **It resolves NOTHING, which is the whole difference from the `⚒` above.** A
@@ -9486,7 +9704,25 @@ func _on_knowledge_requested() -> void:
 ## Is the panel showing the FACTION page? Asked by the drawer, which otherwise re-asserts the selected
 ## band as the panel's subject on every render and would steal the page out from under a caret click.
 func is_faction_page() -> bool:
-    return _panel_is_faction
+    return _is_aggregate_page()
+
+## The band the panel is DRILLED INTO - the panel shows one band that is in a tribe - else `{}`. The tile
+## card's `Band:` picker asks it: a card opened from a member's own panel defaults to that band, any other
+## to the tribe.
+func drilled_member_band() -> Dictionary:
+    return _band_labor.panel_band() if not _drilled_members().is_empty() else {}
+
+## Land on a tribe's Work tab (a shared work was just started from a card): its page, Work zone up.
+func show_tribe_work(tribe_id: int) -> void:
+    if _panel == null:
+        return
+    render_tribe(tribe_id)
+    _panel.set_active_tab(BandCityPanel.ZONE_WORK)
+
+## The faction page or a tribe's page: a subject that is not one band, so the band verbs grey and the
+## band-keyed tabs stand down.
+func _is_aggregate_page() -> bool:
+    return _panel_is_faction or _tribe_page_id != HudTribeVocab.NO_TRIBE
 
 ## Expand or collapse a faction summary row. ONE row open at a time — the zones clip, and two open
 ## details would push the second list off the bottom of a horizontal dock's box.
@@ -9522,18 +9758,29 @@ func jump_to_builder_band(band_id: int) -> void:
         _selectioncard.select_roster_occupant("unit", entity)
         emit_signal("roster_occupant_selected", "unit", entity)
 
-## Walk to the next/prev subject (cycler ◀/▶) over `[the faction page] + player_bands()`.
+## Walk to the next/prev subject (cycler ◀/▶).
+##
+## **THE WALK IS `[the faction page] + one entry per top-level subject`** (`TribeRoster.subjects`): a band in
+## no tribe is its own entry and a tribe is ONE entry, at its first member band's place. **WHILE DRILLED INTO
+## A MEMBER BAND the walk is that tribe's members alone**, so the count reads n/N of them.
 ##
 ## A band routes through the SAME band-selection a roster click uses — recenter + select the band's hex
 ## (rebuilding that hex's roster), then pin the exact band — so the map ring, Tile card, roster and this
 ## panel all land on the cycled band.
 ##
-## **THE FACTION PAGE MOVES NO CAMERA, and that is a documented exception to decision 2 of
-## `docs/plan_band_city_dock.md`** ("panel cycling recenters the map on the cycled settlement"). It has
-## no tile: there is nothing to centre on, and recentring on the band the player happened to leave
+## **THE FACTION PAGE AND A TRIBE'S PAGE MOVE NO CAMERA, and that is a documented exception to decision 2 of
+## `docs/plan_band_city_dock.md`** ("panel cycling recenters the map on the cycled settlement"). Neither
+## has a tile: there is nothing to centre on, and recentring on the band the player happened to leave
 ## would move the map for a page that says nothing about where it is.
 func cycle_band(delta: int) -> void:
     if _panel == null:
+        return
+    var members := _drilled_members()
+    if not members.is_empty():
+        if members.size() <= 1:
+            return
+        var at := _member_index(members, int(_band_labor.panel_band().get("entity", -1)))
+        _select_band_on_map(members[posmod(at + delta, members.size())])
         return
     var n := _cycler_count()
     # One band ⇒ two entries, so the cycler is live where it used to be dead: the faction page is
@@ -9544,23 +9791,74 @@ func cycle_band(delta: int) -> void:
     if next == FACTION_CYCLER_INDEX:
         render_faction()
         return
-    _select_band_on_map(_band_labor.player_bands()[next - FACTION_CYCLER_ENTRIES])
+    var subject: Dictionary = TribeRoster.subjects(_band_labor.player_bands())[next - FACTION_CYCLER_ENTRIES]
+    if String(subject[TribeRoster.SUBJECT_KIND]) == TribeRoster.SUBJECT_TRIBE:
+        render_tribe(int(subject[TribeRoster.SUBJECT_TRIBE_ID]))
+        return
+    _select_band_on_map(subject[TribeRoster.SUBJECT_BAND_DICT])
 
-## How many entries the cycler walks: every player band plus the pinned faction page.
+## How many entries the top-level walk has: every top-level subject plus the pinned faction page.
 func _cycler_count() -> int:
-    return _band_labor.player_bands().size() + FACTION_CYCLER_ENTRIES
+    return TribeRoster.subjects(_band_labor.player_bands()).size() + FACTION_CYCLER_ENTRIES
 
 ## Where the panel's current subject sits in that walk.
 func _cycler_index() -> int:
     if _panel_is_faction:
         return FACTION_CYCLER_INDEX
-    return _cycler_index_of_band(_index_of_player_band(int(_band_labor.panel_band().get("entity", -1))))
+    var subjects := TribeRoster.subjects(_band_labor.player_bands())
+    if _tribe_page_id != HudTribeVocab.NO_TRIBE:
+        return _cycler_index_of_subject(TribeRoster.subject_index_of_tribe(subjects, _tribe_page_id))
+    var band := _band_labor.panel_band()
+    var at := TribeRoster.subject_index_of_band(subjects, int(band.get("entity", -1)))
+    if at < 0 and TribeRoster.is_member(band):
+        at = TribeRoster.subject_index_of_tribe(subjects, TribeRoster.tribe_id_of(band))
+    return _cycler_index_of_subject(at)
 
-## A band's roster index as a CYCLER index — the pinned page's entries shift every band along by one.
-## A band absent from the roster (mid-swap, or a marker click on one the snapshot has since dropped)
+## A subject's index as a CYCLER index — the pinned page's entry shifts every subject along by one. A
+## subject absent from the walk (mid-swap, or a marker click on a band the snapshot has since dropped)
 ## resolves to the first, which is `_resolve_panel_band`'s own fallback.
-func _cycler_index_of_band(roster_index: int) -> int:
-    return FACTION_CYCLER_ENTRIES + (roster_index if roster_index >= 0 else 0)
+func _cycler_index_of_subject(subject_index: int) -> int:
+    return FACTION_CYCLER_ENTRIES + (subject_index if subject_index >= 0 else 0)
+
+## The members of the tribe the panel is DRILLED INTO — the panel shows one band that is in a tribe — or
+## `[]` when it shows a lone band, the faction page or a tribe's own page.
+func _drilled_members() -> Array:
+    if _is_aggregate_page():
+        return []
+    var band := _band_labor.panel_band()
+    if band.is_empty() or not TribeRoster.is_member(band):
+        return []
+    return TribeRoster.members(_band_labor.player_bands(), TribeRoster.tribe_id_of(band))
+
+func _member_index(members: Array, entity: int) -> int:
+    for i in range(members.size()):
+        if int((members[i] as Dictionary).get("entity", -1)) == entity:
+            return i
+    return 0
+
+## The header's `n / N` for a band's page: of the tribe's members while drilled in, else of the walk.
+func _push_band_cycler(band: Dictionary, _roster_index: int) -> void:
+    var members := _drilled_members()
+    if not members.is_empty():
+        _panel.set_cycler(_member_index(members, int(band.get("entity", -1))), members.size())
+        return
+    _panel.set_cycler(_cycler_index(), _cycler_count())
+
+## The breadcrumb above a member band's title (`‹ Reedwater tribe › Greyfen`); none for any other subject.
+func _push_breadcrumb(band: Dictionary) -> void:
+    if _panel == null:
+        return
+    if band.is_empty() or not TribeRoster.is_member(band):
+        _panel.set_breadcrumb("", "")
+        return
+    _panel.set_breadcrumb(String(band.get(HudTribeVocab.KEY_TRIBE_NAME, "")), HudFormat.band_name(band))
+
+## The breadcrumb's `‹ Reedwater tribe`: render the tribe the panel's band belongs to.
+func _on_breadcrumb_activated() -> void:
+    var band := _band_labor.panel_band()
+    if band.is_empty() or not TribeRoster.is_member(band):
+        return
+    render_tribe(TribeRoster.tribe_id_of(band))
 
 ## Jump to the panel band on the map (the header title is a "jump to my band" affordance): recenter
 ## + select its hex and move the ring, WITHOUT changing which band the panel shows (it's already
@@ -9570,7 +9868,7 @@ func _cycler_index_of_band(roster_index: int) -> int:
 ## this is the second half of one rule rather than the only guard — but `focus_panel_band` is reached
 ## BY NAME through `Main`'s `has_method` probe, so the verb must be safe to call in every state.
 func focus_band() -> void:
-    if _panel_is_faction:
+    if _is_aggregate_page():
         return
     _select_band_on_map(_band_labor.panel_band())
 
@@ -9588,6 +9886,7 @@ func _select_band_on_map(band: Dictionary) -> void:
     # steal the page). Clearing the flag here is what tells the gate this render is the wanted one;
     # without it the cycler walked off the page and the panel silently stayed on it.
     _panel_is_faction = false
+    _tribe_page_id = HudTribeVocab.NO_TRIBE
     var entity := int(band.get("entity", -1))
     var x := int(band.get("current_x", -1))
     var y := int(band.get("current_y", -1))

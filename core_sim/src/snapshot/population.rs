@@ -1243,9 +1243,15 @@ pub(crate) struct TribeProgress {
 /// **The formed tribe a band belongs to, as published** -- published whether or not the band has a
 /// leader of its own.
 pub(crate) struct TribeMembership {
+    /// The tribe's durable id (`TribeId.0`).
+    pub(crate) id: u64,
     pub(crate) name: String,
     /// Every member band's name, largest band first, ties by band id.
     pub(crate) member_names: Vec<String>,
+    /// The members' `BandId`s in exactly the order of `member_names`.
+    pub(crate) member_bands: Vec<u64>,
+    /// What the tribe's leader proposes now (empty `key` = nothing).
+    pub(crate) proposal: sim_schema::TribeProposalState,
     pub(crate) leader_name: String,
     pub(crate) leader_kind: u8,
     /// How many bands the tribe has: the tribe leader's load.
@@ -1317,6 +1323,7 @@ pub(crate) fn tribe_membership(
     names: &BandNameLookup,
     sizes: &BandSizeLookup,
     stages: Option<&crate::settlement::SettlementStages>,
+    proposals: Option<&crate::tribe_proposals::TribeProposalBook>,
 ) -> Option<TribeMembership> {
     let tribe = registry.tribe_of(band)?;
     let mut members: Vec<BandId> = tribe.members.iter().copied().collect();
@@ -1326,8 +1333,15 @@ pub(crate) fn tribe_membership(
             *member,
         )
     });
+    let member_bands = members.iter().map(|member| member.0).collect();
     Some(TribeMembership {
+        id: tribe.id.0,
         name: tribe.name.clone(),
+        proposal: proposals
+            .and_then(|book| book.current(tribe.id))
+            .cloned()
+            .unwrap_or_default(),
+        member_bands,
         member_names: members
             .into_iter()
             .map(|member| {
@@ -3674,6 +3688,15 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         tribe_works: tribe_membership
             .as_ref()
             .map(|t| t.works.clone())
+            .unwrap_or_default(),
+        tribe_id: tribe_membership.as_ref().map_or(0, |t| t.id),
+        tribe_member_bands: tribe_membership
+            .as_ref()
+            .map(|t| t.member_bands.clone())
+            .unwrap_or_default(),
+        tribe_proposal: tribe_membership
+            .as_ref()
+            .map(|t| t.proposal.clone())
             .unwrap_or_default(),
         tribe_member_names: tribe_membership.map(|t| t.member_names).unwrap_or_default(),
         culture_traits,

@@ -452,6 +452,9 @@ signal reservation_changed(edge: int, size: float)
 signal cycle_requested(delta: int)
 ## The header subject cluster (stage glyph + name + stage label) was clicked — "jump to my band".
 signal subject_activated
+## The breadcrumb's `‹ Reedwater tribe` was pressed: the subject is a member band and the player asked for
+## the tribe's page. The panel only says so; the controller decides what that renders.
+signal breadcrumb_activated
 ## The panel's registered `⚒` was pressed — open the Materials & Crafting panel
 ## (`.claude/rules/client/crafting-panel.md`).
 ##
@@ -527,6 +530,10 @@ var _rail_glyph_label: Label
 var _stage_glyph_sprite: TextureRect
 var _rail_glyph_sprite: TextureRect
 var _name_label: Label
+## The line above the title while the subject is a member band: `‹ <tribe>` (a link) then `› <band>`.
+var _breadcrumb_row: HBoxContainer
+var _breadcrumb_link: Button
+var _breadcrumb_tail: Label
 var _stage_label: Label
 ## The band's hex coordinates, beside the stage word on the header's second line. IDENTITY, not a
 ## vital: it answers "which band am I looking at", exactly as the name and the stage do, so it lives
@@ -681,6 +688,15 @@ func set_header(stage_id: String, glyph: String, subject_name: String, stage_lab
 		_position_label.text = position_label
 		_position_label.tooltip_text = position_label
 		_position_label.visible = not position_label.is_empty()
+
+## Put the breadcrumb above the title: `‹ <tribe_name> › <band_name>`, the first half a link back to the
+## tribe's page. An empty `tribe_name` hides it.
+func set_breadcrumb(tribe_name: String, band_name: String) -> void:
+	if _breadcrumb_row == null:
+		return
+	_breadcrumb_row.visible = tribe_name != ""
+	_breadcrumb_link.text = HudTribeVocab.BREADCRUMB_BACK_FORMAT % tribe_name
+	_breadcrumb_tail.text = HudTribeVocab.BREADCRUMB_TAIL_FORMAT % band_name
 
 ## Update the cycler readout ("index+1 / count"). count <= 0 blanks it.
 func set_cycler(index: int, count: int) -> void:
@@ -1181,6 +1197,24 @@ func _build_header_full() -> HBoxContainer:
 	_position_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	stage_row.add_child(_stage_label)
 	stage_row.add_child(_position_label)
+	_breadcrumb_row = HBoxContainer.new()
+	_breadcrumb_row.visible = false
+	_breadcrumb_row.add_theme_constant_override("separation", STAGE_ROW_SEPARATION)
+	_breadcrumb_link = Button.new()
+	_breadcrumb_link.flat = true
+	_breadcrumb_link.focus_mode = Control.FOCUS_NONE
+	_breadcrumb_link.tooltip_text = HudTribeVocab.BREADCRUMB_TIP
+	_breadcrumb_link.add_theme_font_size_override("font_size", HudTribeVocab.BREADCRUMB_FONT_SIZE)
+	HudStyle.apply_link_button(_breadcrumb_link, HudStyle.SIGNAL_DEEP)
+	_breadcrumb_link.set_meta(HudTribeVocab.BREADCRUMB_META, true)
+	_breadcrumb_link.pressed.connect(func() -> void: breadcrumb_activated.emit())
+	_breadcrumb_tail = Label.new()
+	_breadcrumb_tail.add_theme_font_size_override("font_size", HudTribeVocab.BREADCRUMB_FONT_SIZE)
+	_breadcrumb_tail.add_theme_color_override("font_color", HudStyle.INK_FAINT)
+	_breadcrumb_tail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_breadcrumb_row.add_child(_breadcrumb_link)
+	_breadcrumb_row.add_child(_breadcrumb_tail)
+	subject.add_child(_breadcrumb_row)
 	subject.add_child(_name_label)
 	subject.add_child(stage_row)
 	cluster_row.add_child(subject)

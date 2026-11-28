@@ -1711,6 +1711,14 @@ table PopulationCohortState {
   // all the tribe's members; the default (empty id) in no tribe, for a foreign band and for a party.
   // Appended last.
   tribeSettlementStage:SettlementStageView;
+  // *** THE TRIBE ON SCREEN (#863, appended last). *** Published to every own member band of a formed
+  // tribe (the tribeName rule); a foreign row and a band in no tribe carry the defaults.
+  // The tribe's durable id, so a client keys the tribe stably; 0 = in no tribe.
+  tribeId:ulong = 0;
+  // The member bands' BandIds, in exactly the order of `tribeMemberNames` (parallel to it).
+  tribeMemberBands:[ulong];
+  // What the tribe leader proposes now (the same row on every member band); an empty key = none.
+  tribeProposal:TribeProposalState;
 }
 
 
@@ -2172,6 +2180,22 @@ enum SourcePriority : ubyte {
   Normal = 0,
   High = 1,
   Low = 2,
+}
+
+// THE TRIBE LEADER'S PROPOSAL (#863) - `PopulationCohortState.tribeProposal`. The words are composed in the
+// sim; the client renders them. Answered with `tribe_proposal <f> <b> approve|defer <key>`. Appended last.
+table TribeProposalState {
+  // The stable key a command names: `monument@x,y`, `storage:<rung>@x,y` or `road:<bandA>-<bandB>`.
+  key:string;
+  // `monument`, `storage` or `road`.
+  kind:string;
+  // The whole line, e.g. "Zeke proposes: raise a monument at (44, 28)".
+  text:string;
+  // The monument or pit tile, or the first road tile.
+  tileX:uint = 0;
+  tileY:uint = 0;
+  // The pit's band id; 0 otherwise.
+  forBand:ulong = 0;
 }
 
 // ONE WORK THE TRIBE OWNS - a row of `PopulationCohortState.tribeWorks`. Appended last.

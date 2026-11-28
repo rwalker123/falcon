@@ -21,7 +21,7 @@ use crate::state::population::{
     MaterialBatchState, MaterialShortfallState, PoolCrewLineState, PoolToeLineState,
     PoolingLinkState, PopulationCohortState, PopulationDemographicsState, ScoutTaskState,
     SettlementStageViewState, SourcePriorityState, StorageSaveState, TransferCrossingState,
-    TribeClosenessState, TribePairState, TribeWorkState, WorkKitWantState,
+    TribeClosenessState, TribePairState, TribeProposalState, TribeWorkState, WorkKitWantState,
 };
 use crate::state::subsistence::BuildLegState;
 use crate::world::{WorldDelta, WorldSnapshot};
@@ -124,6 +124,8 @@ fn create_populations<'a>(
             };
             let settlement_stage = create_stage_view(builder, &cohort.settlement_stage);
             let tribe_settlement_stage = create_stage_view(builder, &cohort.tribe_settlement_stage);
+            let tribe_member_bands = builder.create_vector(&cohort.tribe_member_bands);
+            let tribe_proposal = create_tribe_proposal(builder, &cohort.tribe_proposal);
             let harvest = cohort.harvest_task.as_ref().map(|task| {
                 let module = builder.create_string(&task.module);
                 let band_label = builder.create_string(&task.band_label);
@@ -1239,6 +1241,9 @@ fn create_populations<'a>(
                     heldStores: Some(held_stores),
                     chiefProposals: Some(chief_proposals),
                     tribeSettlementStage: Some(tribe_settlement_stage),
+                    tribeId: cohort.tribe_id,
+                    tribeMemberBands: Some(tribe_member_bands),
+                    tribeProposal: Some(tribe_proposal),
                 },
             )
         })
@@ -1908,6 +1913,12 @@ fn decode_population(
         }),
         settlement_stage: decode_stage_view(cohort.settlementStage()),
         tribe_settlement_stage: decode_stage_view(cohort.tribeSettlementStage()),
+        tribe_id: cohort.tribeId(),
+        tribe_member_bands: cohort
+            .tribeMemberBands()
+            .map(|bands| bands.iter().collect())
+            .unwrap_or_default(),
+        tribe_proposal: decode_tribe_proposal(cohort.tribeProposal()),
         food_income: cohort.foodIncome(),
         food_consumption: cohort.foodConsumption(),
         hunt_per_worker_provisions: cohort.huntPerWorkerProvisions(),
@@ -2458,6 +2469,40 @@ fn create_stage_view<'a>(
             icon: Some(icon),
         },
     )
+}
+
+/// A `TribeProposalState` table.
+fn create_tribe_proposal<'a>(
+    builder: &mut FbBuilder<'a>,
+    proposal: &TribeProposalState,
+) -> WIPOffset<fb::TribeProposalState<'a>> {
+    let key = builder.create_string(&proposal.key);
+    let kind = builder.create_string(&proposal.kind);
+    let text = builder.create_string(&proposal.text);
+    fb::TribeProposalState::create(
+        builder,
+        &fb::TribeProposalStateArgs {
+            key: Some(key),
+            kind: Some(kind),
+            text: Some(text),
+            tileX: proposal.tile_x,
+            tileY: proposal.tile_y,
+            forBand: proposal.for_band,
+        },
+    )
+}
+
+fn decode_tribe_proposal(proposal: Option<fb::TribeProposalState<'_>>) -> TribeProposalState {
+    proposal
+        .map(|proposal| TribeProposalState {
+            key: text(proposal.key()),
+            kind: text(proposal.kind()),
+            text: text(proposal.text()),
+            tile_x: proposal.tileX(),
+            tile_y: proposal.tileY(),
+            for_band: proposal.forBand(),
+        })
+        .unwrap_or_default()
 }
 
 fn decode_stage_view(stage: Option<fb::SettlementStageView<'_>>) -> SettlementStageViewState {
