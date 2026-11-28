@@ -363,7 +363,16 @@ fn band_suggestions_and_offers(
     });
     // **The hunt-turn pass**, so a kit a going-out hunt crew is short of is in the list auto-craft
     // works down exactly as it is in the panel's (`snapshot::population::hunt_turn_lines`).
-    let hunt_turn = hunt_turn_pass(world, cohort, allocation, bench, &wear, configs);
+    let levied_roads = levied_roads_of(world, band);
+    let hunt_turn = hunt_turn_pass(
+        world,
+        cohort,
+        allocation,
+        &levied_roads,
+        bench,
+        &wear,
+        configs,
+    );
     let ladder = world.get_resource::<LadderConfigHandle>()?.get();
     let labor = world.get_resource::<crate::LaborConfigHandle>()?.get();
     let expedition = world.get_resource::<crate::ExpeditionConfigHandle>()?.get();
@@ -395,6 +404,7 @@ fn band_suggestions_and_offers(
     // The offers come first: the wear forecast reads the recipe each item's row marks `suggested`.
     let mut suggestions = band_suggestions(
         allocation,
+        &levied_roads,
         take_rows,
         hunt_turn.as_deref(),
         Some(bench),
@@ -443,6 +453,7 @@ fn hunt_turn_pass(
     world: &World,
     cohort: &PopulationCohort,
     allocation: &LaborAllocation,
+    levied_roads: &[bevy::prelude::UVec2],
     bench: &BandBench,
     wear: &BandEquipment,
     configs: &FillConfigs,
@@ -468,6 +479,7 @@ fn hunt_turn_pass(
     with_world_sources(world, cohort.faction, |sources| {
         crate::snapshot::population::hunt_turn_lines(
             allocation,
+            levied_roads,
             idle,
             &is_local,
             crate::components::MusterBench::of(bench),
@@ -477,6 +489,19 @@ fn hunt_turn_pass(
             None,
         )
     })
+}
+
+/// **The road tiles whose builds are this band's tribe levy**, the capture's own reading
+/// (`tribe_levy::band_levied_road_tiles`); empty for a band in no tribe or a world with none.
+fn levied_roads_of(world: &World, band: Entity) -> Vec<bevy::prelude::UVec2> {
+    let (Some(registry), Some(ladder), Some(id)) = (
+        world.get_resource::<crate::tribe::TribeRegistry>(),
+        world.get_resource::<LadderConfigHandle>(),
+        world.get::<crate::components::BandId>(band),
+    ) else {
+        return Vec::new();
+    };
+    crate::tribe_levy::band_levied_road_tiles(registry, &ladder.get(), *id)
 }
 
 /// The band's kit ledger — a band with none reads as start-stocked, as the snapshot's does.

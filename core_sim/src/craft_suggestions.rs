@@ -125,6 +125,11 @@ pub struct ToolShortfallLine {
     /// Units the settlement handed it. Whole units, so it may exceed [`Self::required`]; a shortfall
     /// is `(required − filled).max(0)`, never a bare subtraction.
     pub filled: f32,
+    /// **Whether the consumer is a levy row** - a labor row (or a declared build whose builders are
+    /// one) carrying `for_tribe`. A tribe's work has no bench of its own: the member band's bench
+    /// marks the units it makes for it. Never part of [`SupplySource`], which is a key. Always `false`
+    /// on a pool, a site crew and the bench's own line.
+    pub for_tribe: bool,
 }
 
 /// **ONE CONSUMER GOING WITHOUT A SUGGESTED ITEM** — a row of [`CraftSuggestion::sources`].
@@ -138,6 +143,8 @@ pub struct SuggestionSourceLine {
     /// `workers_without × build_work` where the consumer builds or keeps
     /// ([`SupplySource::adds_work`]), else [`NO_WORK_RECOVERED`].
     pub work_per_turn: f32,
+    /// [`ToolShortfallLine::for_tribe`] of the line this came from.
+    pub for_tribe: bool,
 }
 
 /// **ONE SUGGESTION** — an item, how many to make, and who is going without it.
@@ -177,6 +184,9 @@ pub struct CraftSuggestion {
     /// **What the same tool costs to make, in the same crew-free bench turns**: its recipe's work over
     /// the rate the bench would work it at. `0` on every other suggestion.
     pub bench_build_turns: f32,
+    /// **The units of [`Self::count`] owed to levy rows** (see [`TribeDemand`]): the band's own
+    /// demand is met first by the queue, the tribe's second.
+    pub for_tribe_count: u32,
 }
 
 /// **A LINE THAT IS NOT SHORT** — the boundary at and below which a consumer went without nothing.
@@ -213,6 +223,7 @@ const NOTHING_TO_MAKE: f32 = 0.0;
 /// **Call it only for a resident band.** A detached party is not a source — see the module docs.
 pub fn band_tool_shortfall_lines<'a>(
     allocation: &LaborAllocation,
+    levied_roads: &[bevy::prelude::UVec2],
     take_rows: impl IntoIterator<Item = (usize, &'a str, f32, f32)>,
     equipment: &EquipmentConfig,
 ) -> Vec<ToolShortfallLine> {
@@ -224,6 +235,7 @@ pub fn band_tool_shortfall_lines<'a>(
             item: line.item.clone(),
             required: line.required,
             filled: line.filled,
+            for_tribe: false,
         });
     let sites = allocation
         .last_keeping_issued
@@ -233,6 +245,7 @@ pub fn band_tool_shortfall_lines<'a>(
             item: issue.item.clone(),
             required: issue.required,
             filled: issue.units,
+            for_tribe: false,
         });
     let takes = take_rows
         .into_iter()
@@ -246,11 +259,26 @@ pub fn band_tool_shortfall_lines<'a>(
                 item: item.to_string(),
                 required,
                 filled,
+                for_tribe: assignment.for_tribe.is_some(),
             })
         });
     let mut lines: Vec<ToolShortfallLine> = pools.chain(sites).chain(takes).collect();
-    lines.extend(build_lines(allocation));
+    lines.extend(build_lines(allocation, levied_roads));
     lines
+}
+
+/// **WHETHER A DECLARED BUILD'S BUILDERS ARE A LEVY ROW** - a row of the band's own list that names
+/// the build's source and carries `for_tribe` (the test the chief's wait reads in `staffing`).
+fn build_is_levied(
+    allocation: &LaborAllocation,
+    levied_roads: &[bevy::prelude::UVec2],
+    source: &BuildSource,
+) -> bool {
+    crate::tribe_levy::road_build_is_levied(levied_roads, source)
+        || allocation
+            .assignments
+            .iter()
+            .any(|row| row.for_tribe.is_some() && source.names(&row.target))
 }
 
 /// **THE KEEPING JOBS A SITE CREW KEEPS ITS SOURCE UNDER** — a site's tools are the keeping kits'
@@ -540,7 +568,10 @@ pub fn take_row_gear(
 /// **THE DECLARED BUILDS' LINES** — each build's tool claim as the turn settled it
 /// ([`LaborAllocation::last_build_toe`]): what all its builders would need of an item beside what the
 /// settlement gave the builders staffing armed. Nothing here re-derives the settlement.
-fn build_lines(allocation: &LaborAllocation) -> Vec<ToolShortfallLine> {
+fn build_lines(
+    allocation: &LaborAllocation,
+    levied_roads: &[bevy::prelude::UVec2],
+) -> Vec<ToolShortfallLine> {
     allocation
         .last_build_toe
         .iter()
@@ -551,6 +582,7 @@ fn build_lines(allocation: &LaborAllocation) -> Vec<ToolShortfallLine> {
             item: line.item.clone(),
             required: line.required,
             filled: line.filled,
+            for_tribe: build_is_levied(allocation, levied_roads, &line.source),
         })
         .collect()
 }
@@ -564,8 +596,10 @@ fn build_lines(allocation: &LaborAllocation) -> Vec<ToolShortfallLine> {
 /// mustered pass sees the kit its crew would claim. Each item's shortfall is the larger of the two
 /// readings ([`craft_suggestions_over`]), so a kit a hunt crew is short of is suggested - and
 /// auto-craft, reading this same list, queues it. `None` is a band with no hunt going out.
+#[allow(clippy::too_many_arguments)]
 pub fn band_suggestions<'a>(
     allocation: &LaborAllocation,
+    levied_roads: &[bevy::prelude::UVec2],
     take_rows: impl IntoIterator<Item = (usize, &'a str, f32, f32)>,
     hunt_turn: Option<&[ToolShortfallLine]>,
     bench: Option<&BandBench>,
@@ -574,7 +608,7 @@ pub fn band_suggestions<'a>(
     forecast: Option<ForecastInputs<'_>>,
 ) -> Vec<CraftSuggestion> {
     let SuggestionConfigs { recipes, equipment } = configs;
-    let lines = band_tool_shortfall_lines(allocation, take_rows, equipment);
+    let lines = band_tool_shortfall_lines(allocation, levied_roads, take_rows, equipment);
     let passes: Vec<&[ToolShortfallLine]> =
         std::iter::once(lines.as_slice()).chain(hunt_turn).collect();
     let upcoming = forecast.map_or_else(BTreeMap::new, |inputs| {
@@ -624,6 +658,16 @@ fn suggestions_over(
     equipment: &EquipmentConfig,
     upcoming: &WearForecast,
 ) -> Vec<CraftSuggestion> {
+    let by_item = winning_sources(passes, equipment);
+    suggestions_from(by_item, bench, recipes, upcoming)
+}
+
+/// **EACH ITEM'S SOURCE LINES, off the pass whose shortfall is the larger** - the rule
+/// [`craft_suggestions_over`] states: never the sum, ties to the earlier pass.
+fn winning_sources<'a>(
+    passes: &[&'a [ToolShortfallLine]],
+    equipment: &EquipmentConfig,
+) -> BTreeMap<&'a str, Vec<SuggestionSourceLine>> {
     let mut by_item: BTreeMap<&str, Vec<SuggestionSourceLine>> = BTreeMap::new();
     for pass in passes {
         for (item, sources) in group_missing(pass, equipment) {
@@ -638,7 +682,66 @@ fn suggestions_over(
             }
         }
     }
-    suggestions_from(by_item, bench, recipes, upcoming)
+    by_item
+}
+
+/// **THE FOR-THE-TRIBE SPLIT OF ONE ITEM'S DEMAND** (derived every turn, never saved).
+///
+/// `total` is the item's whole shortfall `S` ([`whole_shortfall`] over every source line); `tribe` is
+/// `T`, the same formula over the lines whose consumer is a levy row, clipped to `S`. The band's own
+/// demand is `B = S - T`. **The queue meets the band's own demand first, then the tribe's**: of `Q`
+/// units still to make, `clamp(Q - B, 0, T)` are covered tribe units.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TribeDemand {
+    pub total: f32,
+    pub tribe: f32,
+}
+
+/// **NO TRIBE UNITS** - the `for_tribe_count` of a suggestion with no levy consumer.
+const NO_TRIBE_UNITS: u32 = 0;
+
+impl TribeDemand {
+    /// The split over one item's source lines.
+    pub fn of(sources: &[SuggestionSourceLine]) -> Self {
+        let sum = |tribe_only: bool| -> f32 {
+            sources
+                .iter()
+                .filter(|line| line.for_tribe || !tribe_only)
+                .map(|line| line.missing_units)
+                .sum()
+        };
+        let total = whole_shortfall(sum(false));
+        let tribe = whole_shortfall(sum(true)).min(total);
+        Self { total, tribe }
+    }
+
+    /// The band's own units, `B = S - T`.
+    pub fn own(&self) -> f32 {
+        self.total - self.tribe
+    }
+
+    /// Tribe units the queue already covers, `clamp(Q - B, 0, T)`.
+    pub fn tribe_covered(&self, queued: f32) -> f32 {
+        (queued - self.own()).clamp(NOTHING_TO_MAKE, self.tribe)
+    }
+
+    /// Tribe units still owed once the queue has made what it owes, `T - covered`.
+    pub fn owed_after_queue(&self, queued: f32) -> f32 {
+        self.tribe - self.tribe_covered(queued)
+    }
+}
+
+/// **THE FOR-THE-TRIBE SPLIT PER ITEM**, struck over the same passes and the same winning pass Make
+/// next ranks by, so the bench's order rows and the suggestions cannot disagree. Items nobody is
+/// short of are absent.
+pub fn tribe_demands(
+    passes: &[&[ToolShortfallLine]],
+    equipment: &EquipmentConfig,
+) -> BTreeMap<String, TribeDemand> {
+    winning_sources(passes, equipment)
+        .into_iter()
+        .map(|(item, sources)| (item.to_string(), TribeDemand::of(&sources)))
+        .collect()
 }
 
 /// One pass's missing units per item, as source lines.
@@ -668,6 +771,7 @@ fn group_missing<'a>(
                 missing_units,
                 workers_without,
                 work_per_turn,
+                for_tribe: line.for_tribe,
             });
     }
 
@@ -707,6 +811,8 @@ fn suggestions_from(
             if count <= NOTHING_TO_MAKE {
                 return None;
             }
+            let demand = TribeDemand::of(&sources);
+            let for_tribe_count = demand.owed_after_queue(queued).min(count) as u32;
             Some(CraftSuggestion {
                 item: item.to_string(),
                 count: count as u32,
@@ -720,6 +826,7 @@ fn suggestions_from(
                 reason: String::new(),
                 bench_turns_saved: NO_BENCH_TURNS,
                 bench_build_turns: NO_BENCH_TURNS,
+                for_tribe_count,
             })
         })
         .collect();
@@ -808,6 +915,51 @@ pub fn queued_units(bench: Option<&BandBench>, recipes: &RecipesConfig, item: &s
     owed + parked_units(Some(bench), item)
 }
 
+/// **EACH BENCH ORDER'S ITEMS THAT ARE FOR THE TRIBE**, index-aligned with [`BandBench::orders`]
+/// (items still to make, `count - made`, so a recipe making several per pass is counted in items).
+///
+/// For one item the queue is a line of units: the parked finished ones first, then every order's
+/// remaining units in queue order. The first `B` places of the line are the band's own demand, the
+/// next `clamp(Q - B, 0, T)` the tribe's ([`TribeDemand`]); an order's share is where its units
+/// overlap the tribe's places. Derived every turn from the lines - nothing is saved.
+pub fn bench_orders_for_tribe(
+    bench: &BandBench,
+    recipes: &RecipesConfig,
+    demands: &BTreeMap<String, TribeDemand>,
+) -> Vec<u32> {
+    let mut walked: BTreeMap<&str, f32> = BTreeMap::new();
+    bench
+        .orders
+        .iter()
+        .map(|order| {
+            let Some(recipe) = recipes.recipe(&order.recipe_id) else {
+                return NO_TRIBE_UNITS;
+            };
+            let Some((item, per_pass)) = recipe
+                .outputs
+                .iter()
+                .find_map(|output| output.equipment_id().map(|item| (item, output.amount)))
+            else {
+                return NO_TRIBE_UNITS;
+            };
+            let Some(demand) = demands.get(item) else {
+                return NO_TRIBE_UNITS;
+            };
+            let queued = queued_units(Some(bench), recipes, item);
+            let covered = demand.tribe_covered(queued);
+            let tribe_from = demand.own();
+            let tribe_to = tribe_from + covered;
+            let start = *walked
+                .entry(item)
+                .or_insert_with(|| parked_units(Some(bench), item));
+            let units = order.remaining() as f32 * per_pass;
+            walked.insert(item, start + units);
+            let overlap = (start + units).min(tribe_to) - start.max(tribe_from);
+            (overlap.max(NOTHING_TO_MAKE) / per_pass).ceil() as u32
+        })
+        .collect()
+}
+
 /// **UNITS OF `item` THE BENCH HAS FINISHED AND PARKED** on [`BandBench::finished`], stocked at the
 /// top of the next turn. The one sum [`queued_units`] adds to what the queue owes and the readout
 /// [`KitNeedItem::finished`] publishes, so the two cannot drift.
@@ -887,6 +1039,7 @@ pub fn build_material_suggestions(
                     missing_units,
                     workers_without: NOTHING_MISSING,
                     work_per_turn: NO_WORK_RECOVERED,
+                    for_tribe: false,
                 });
         }
     }
@@ -925,6 +1078,7 @@ pub fn build_material_suggestions(
                 display_name: String::new(),
                 bench_turns_saved: NO_BENCH_TURNS,
                 bench_build_turns: NO_BENCH_TURNS,
+                for_tribe_count: NO_TRIBE_UNITS,
             })
         })
         .collect()
@@ -1197,6 +1351,7 @@ pub fn bench_tool_suggestions(
                 missing_units: 1.0,
                 workers_without: NOTHING_MISSING,
                 work_per_turn: NO_WORK_RECOVERED,
+                for_tribe: false,
             }],
             upcoming_count: 0,
             expires_in_turns: NO_FORECAST_TURNS,
@@ -1205,6 +1360,7 @@ pub fn bench_tool_suggestions(
             reason: String::new(),
             bench_turns_saved: saved,
             bench_build_turns: cost,
+            for_tribe_count: NO_TRIBE_UNITS,
         };
         match ahead_of {
             Some(index) => suggestions.insert(index, suggestion),
@@ -1449,6 +1605,7 @@ mod tests {
             item: item.to_string(),
             required,
             filled,
+            for_tribe: false,
         }
     }
 
@@ -1630,7 +1787,7 @@ mod tests {
         take_rows: Vec<(usize, &str, f32, f32)>,
     ) -> Vec<CraftSuggestion> {
         let (recipes, equipment) = configs();
-        let lines = band_tool_shortfall_lines(allocation, take_rows, &equipment);
+        let lines = band_tool_shortfall_lines(allocation, &[], take_rows, &equipment);
         craft_suggestions(&lines, None, &recipes, &equipment)
     }
 

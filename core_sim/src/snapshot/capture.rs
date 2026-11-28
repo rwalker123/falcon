@@ -3526,6 +3526,17 @@ pub fn capture_snapshot(
                             })
                         })
                         .flatten();
+                    // The road tiles this band's tribe levies it for (the staffing plan's own reading).
+                    let levied_roads = band_id
+                        .zip(tribes.as_deref())
+                        .map(|(band, registry)| {
+                            crate::tribe_levy::band_levied_road_tiles(
+                                registry,
+                                &ladder_config,
+                                *band,
+                            )
+                        })
+                        .unwrap_or_default();
                     // Reach: only an own band row (a party carries its home band's id and
                     // leadership, so it is excluded), the defaults otherwise.
                     let reach = if expedition.is_none() {
@@ -3642,6 +3653,7 @@ pub fn capture_snapshot(
                             })
                             .flatten(),
                         tribe_membership,
+                        levied_roads,
                         settlement_stage: band_id
                             .zip(settlement_stages.as_deref())
                             .and_then(|(band, stages)| stages.of_band(*band)),

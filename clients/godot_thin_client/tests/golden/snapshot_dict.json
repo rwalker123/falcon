@@ -7194,6 +7194,7 @@
                 "material_id": "populations[0].bench.orders[0].drawn_inputs[2].material_id"
               }
             ],
+            "for_tribe": 15,
             "items_in_flight": 72,
             "kit_order": 146,
             "lent_to_hunt": 32,
@@ -7252,6 +7253,7 @@
                 "material_id": "populations[0].bench.orders[1].drawn_inputs[2].material_id"
               }
             ],
+            "for_tribe": 92,
             "items_in_flight": 191,
             "kit_order": 169,
             "lent_to_hunt": 49,
@@ -7310,6 +7312,7 @@
                 "material_id": "populations[0].bench.orders[2].drawn_inputs[2].material_id"
               }
             ],
+            "for_tribe": 65,
             "items_in_flight": 114,
             "kit_order": 48,
             "lent_to_hunt": 42,
@@ -7640,6 +7643,7 @@
           "count": 85,
           "display_name": "populations[0].craft_suggestions[0].display_name",
           "expires_in_turns": 84.720001,
+          "for_tribe_count": 140,
           "item_id": "hoes",
           "lead_turns": 197,
           "reason": "populations[0].craft_suggestions[0].reason",
@@ -7666,6 +7670,7 @@
           "sources": [
             {
               "fauna_id": "populations[0].craft_suggestions[0].sources[0].fauna_id",
+              "for_tribe": true,
               "job": "populations[0].craft_suggestions[0].sources[0].job",
               "kind": "populations[0].craft_suggestions[0].sources[0].kind",
               "material": "populations[0].craft_suggestions[0].sources[0].material",
@@ -7677,6 +7682,7 @@
             },
             {
               "fauna_id": "populations[0].craft_suggestions[0].sources[1].fauna_id",
+              "for_tribe": false,
               "job": "populations[0].craft_suggestions[0].sources[1].job",
               "kind": "populations[0].craft_suggestions[0].sources[1].kind",
               "material": "populations[0].craft_suggestions[0].sources[1].material",
@@ -7688,6 +7694,7 @@
             },
             {
               "fauna_id": "populations[0].craft_suggestions[0].sources[2].fauna_id",
+              "for_tribe": false,
               "job": "populations[0].craft_suggestions[0].sources[2].job",
               "kind": "populations[0].craft_suggestions[0].sources[2].kind",
               "material": "populations[0].craft_suggestions[0].sources[2].material",
@@ -7708,6 +7715,7 @@
           "count": 126,
           "display_name": "populations[0].craft_suggestions[1].display_name",
           "expires_in_turns": 94.589996,
+          "for_tribe_count": 139,
           "item_id": "spears",
           "lead_turns": 136,
           "reason": "populations[0].craft_suggestions[1].reason",
@@ -7734,6 +7742,7 @@
           "sources": [
             {
               "fauna_id": "populations[0].craft_suggestions[1].sources[0].fauna_id",
+              "for_tribe": true,
               "job": "populations[0].craft_suggestions[1].sources[0].job",
               "kind": "populations[0].craft_suggestions[1].sources[0].kind",
               "material": "populations[0].craft_suggestions[1].sources[0].material",
@@ -7745,6 +7754,7 @@
             },
             {
               "fauna_id": "populations[0].craft_suggestions[1].sources[1].fauna_id",
+              "for_tribe": false,
               "job": "populations[0].craft_suggestions[1].sources[1].job",
               "kind": "populations[0].craft_suggestions[1].sources[1].kind",
               "material": "populations[0].craft_suggestions[1].sources[1].material",
@@ -7756,6 +7766,7 @@
             },
             {
               "fauna_id": "populations[0].craft_suggestions[1].sources[2].fauna_id",
+              "for_tribe": false,
               "job": "populations[0].craft_suggestions[1].sources[2].job",
               "kind": "populations[0].craft_suggestions[1].sources[2].kind",
               "material": "populations[0].craft_suggestions[1].sources[2].material",
@@ -10159,6 +10170,7 @@
                 "material_id": "populations[1].bench.orders[0].drawn_inputs[2].material_id"
               }
             ],
+            "for_tribe": 84,
             "items_in_flight": 7,
             "kit_order": 161,
             "lent_to_hunt": 185,
@@ -10217,6 +10229,7 @@
                 "material_id": "populations[1].bench.orders[1].drawn_inputs[2].material_id"
               }
             ],
+            "for_tribe": 95,
             "items_in_flight": 104,
             "kit_order": 186,
             "lent_to_hunt": 112,
@@ -10275,6 +10288,7 @@
                 "material_id": "populations[1].bench.orders[2].drawn_inputs[2].material_id"
               }
             ],
+            "for_tribe": 14,
             "items_in_flight": 177,
             "kit_order": 159,
             "lent_to_hunt": 131,
@@ -10605,6 +10619,7 @@
           "count": 100,
           "display_name": "populations[1].craft_suggestions[0].display_name",
           "expires_in_turns": 38.599998,
+          "for_tribe_count": 5,
           "item_id": "hoes",
           "lead_turns": 126,
           "reason": "populations[1].craft_suggestions[0].reason",
@@ -10631,6 +10646,7 @@
           "sources": [
             {
               "fauna_id": "populations[1].craft_suggestions[0].sources[0].fauna_id",
+              "for_tribe": true,
               "job": "populations[1].craft_suggestions[0].sources[0].job",
               "kind": "populations[1].craft_suggestions[0].sources[0].kind",
               "material": "populations[1].craft_suggestions[0].sources[0].material",
@@ -10642,6 +10658,7 @@
             },
             {
               "fauna_id": "populations[1].craft_suggestions[0].sources[1].fauna_id",
+              "for_tribe": false,
               "job": "populations[1].craft_suggestions[0].sources[1].job",
               "kind": "populations[1].craft_suggestions[0].sources[1].kind",
               "material": "populations[1].craft_suggestions[0].sources[1].material",
@@ -10653,6 +10670,7 @@
             },
             {
               "fauna_id": "populations[1].craft_suggestions[0].sources[2].fauna_id",
+              "for_tribe": false,
               "job": "populations[1].craft_suggestions[0].sources[2].job",
               "kind": "populations[1].craft_suggestions[0].sources[2].kind",
               "material": "populations[1].craft_suggestions[0].sources[2].material",
@@ -10673,6 +10691,7 @@
           "count": 131,
           "display_name": "populations[1].craft_suggestions[1].display_name",
           "expires_in_turns": 79.279999,
+          "for_tribe_count": 134,
           "item_id": "spears",
           "lead_turns": 187,
           "reason": "populations[1].craft_suggestions[1].reason",
@@ -10699,6 +10718,7 @@
           "sources": [
             {
               "fauna_id": "populations[1].craft_suggestions[1].sources[0].fauna_id",
+              "for_tribe": true,
               "job": "populations[1].craft_suggestions[1].sources[0].job",
               "kind": "populations[1].craft_suggestions[1].sources[0].kind",
               "material": "populations[1].craft_suggestions[1].sources[0].material",
@@ -10710,6 +10730,7 @@
             },
             {
               "fauna_id": "populations[1].craft_suggestions[1].sources[1].fauna_id",
+              "for_tribe": false,
               "job": "populations[1].craft_suggestions[1].sources[1].job",
               "kind": "populations[1].craft_suggestions[1].sources[1].kind",
               "material": "populations[1].craft_suggestions[1].sources[1].material",
@@ -10721,6 +10742,7 @@
             },
             {
               "fauna_id": "populations[1].craft_suggestions[1].sources[2].fauna_id",
+              "for_tribe": false,
               "job": "populations[1].craft_suggestions[1].sources[2].job",
               "kind": "populations[1].craft_suggestions[1].sources[2].kind",
               "material": "populations[1].craft_suggestions[1].sources[2].material",
@@ -13068,6 +13090,7 @@
                 "material_id": "populations[2].bench.orders[0].drawn_inputs[2].material_id"
               }
             ],
+            "for_tribe": 181,
             "items_in_flight": 54,
             "kit_order": 156,
             "lent_to_hunt": 190,
@@ -13126,6 +13149,7 @@
                 "material_id": "populations[2].bench.orders[1].drawn_inputs[2].material_id"
               }
             ],
+            "for_tribe": 90,
             "items_in_flight": 125,
             "kit_order": 187,
             "lent_to_hunt": 63,
@@ -13184,6 +13208,7 @@
                 "material_id": "populations[2].bench.orders[2].drawn_inputs[2].material_id"
               }
             ],
+            "for_tribe": 179,
             "items_in_flight": 132,
             "kit_order": 22,
             "lent_to_hunt": 172,
@@ -13514,6 +13539,7 @@
           "count": 135,
           "display_name": "populations[2].craft_suggestions[0].display_name",
           "expires_in_turns": 63.07,
+          "for_tribe_count": 50,
           "item_id": "hoes",
           "lead_turns": 7,
           "reason": "populations[2].craft_suggestions[0].reason",
@@ -13540,6 +13566,7 @@
           "sources": [
             {
               "fauna_id": "populations[2].craft_suggestions[0].sources[0].fauna_id",
+              "for_tribe": true,
               "job": "populations[2].craft_suggestions[0].sources[0].job",
               "kind": "populations[2].craft_suggestions[0].sources[0].kind",
               "material": "populations[2].craft_suggestions[0].sources[0].material",
@@ -13551,6 +13578,7 @@
             },
             {
               "fauna_id": "populations[2].craft_suggestions[0].sources[1].fauna_id",
+              "for_tribe": false,
               "job": "populations[2].craft_suggestions[0].sources[1].job",
               "kind": "populations[2].craft_suggestions[0].sources[1].kind",
               "material": "populations[2].craft_suggestions[0].sources[1].material",
@@ -13562,6 +13590,7 @@
             },
             {
               "fauna_id": "populations[2].craft_suggestions[0].sources[2].fauna_id",
+              "for_tribe": false,
               "job": "populations[2].craft_suggestions[0].sources[2].job",
               "kind": "populations[2].craft_suggestions[0].sources[2].kind",
               "material": "populations[2].craft_suggestions[0].sources[2].material",
@@ -13582,6 +13611,7 @@
           "count": 184,
           "display_name": "populations[2].craft_suggestions[1].display_name",
           "expires_in_turns": 98.82,
+          "for_tribe_count": 137,
           "item_id": "spears",
           "lead_turns": 162,
           "reason": "populations[2].craft_suggestions[1].reason",
@@ -13608,6 +13638,7 @@
           "sources": [
             {
               "fauna_id": "populations[2].craft_suggestions[1].sources[0].fauna_id",
+              "for_tribe": true,
               "job": "populations[2].craft_suggestions[1].sources[0].job",
               "kind": "populations[2].craft_suggestions[1].sources[0].kind",
               "material": "populations[2].craft_suggestions[1].sources[0].material",
@@ -13619,6 +13650,7 @@
             },
             {
               "fauna_id": "populations[2].craft_suggestions[1].sources[1].fauna_id",
+              "for_tribe": false,
               "job": "populations[2].craft_suggestions[1].sources[1].job",
               "kind": "populations[2].craft_suggestions[1].sources[1].kind",
               "material": "populations[2].craft_suggestions[1].sources[1].material",
@@ -13630,6 +13662,7 @@
             },
             {
               "fauna_id": "populations[2].craft_suggestions[1].sources[2].fauna_id",
+              "for_tribe": false,
               "job": "populations[2].craft_suggestions[1].sources[2].job",
               "kind": "populations[2].craft_suggestions[1].sources[2].kind",
               "material": "populations[2].craft_suggestions[1].sources[2].material",

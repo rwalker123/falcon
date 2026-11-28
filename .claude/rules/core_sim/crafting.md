@@ -1476,6 +1476,40 @@ merge) and, off the encoded frame, by
 `::a_suggestion_does_not_rise_on_the_turn_its_item_is_made` and
 `::a_detached_party_publishes_no_suggestions` (paired with its home band carrying the same lines).
 
+## What is for the tribe (#864)
+
+A tribe has no bench: its work arrives as levy rows (`LaborAssignment::for_tribe`) on a member band's own
+list, and that band's bench makes their gear (`work-party.md`, `leadership.md` -> "A tribe levies its
+bands"). The bench marks which units are for the tribe. Everything below is derived each turn at publish
+time and is never saved.
+
+- **Which lines are the tribe's** - `ToolShortfallLine::for_tribe` (not part of `SupplySource`, which is a
+  key). A take row's line is the tribe's when its labor row has `for_tribe`; a declared build's line when a
+  levy row on the band's list names its source (`BuildSource::names`, the test `staffing` uses for the
+  chief's wait), **or a tribe road work names its tile**: a road build has no labor row, so the capture
+  passes the band's levied road tiles (`tribe_levy::band_levied_road_tiles`, off the `TribeRegistry`)
+  and `tribe_levy::road_build_is_levied` answers - the same helper `LevyPlan::levies_road_build` calls,
+  fed by the same `tribe_road_tiles`, so the staffing plan and the suggestions cannot drift. A pool (Roadwork), a site crew and the bench's own line are always the band's. It rides to
+  `CraftSuggestionSource.forTribe`.
+- **The split** (`craft_suggestions::TribeDemand`) per item: `S` is the whole shortfall
+  (`whole_shortfall` of every line's missing units, the formula Make next's count uses), `T` the same over
+  the levy lines clipped to `S`, `B = S - T` the band's own. The queue meets the band's own demand first:
+  of `Q` units still to make (`queued_units`, parked included) `clamp(Q - B, 0, T)` tribe units are
+  covered.
+- **`CraftSuggestion.forTribeCount`** = `min(count, T - covered)`.
+- **Coming up** has no per-line split (a wear forecast is one number per item off the summed `required`),
+  so `forTribeCount` counts only the shortfall share of `count`; an item that is only coming up reads `0`.
+  A build-material suggestion and a bench-tool suggestion read `0`.
+- **`BenchOrder.forTribe`** (`craft_suggestions::bench_orders_for_tribe`, stamped by the capture off the
+  same lines and winning pass): per item the queue is a line of units - parked finished ones first, then each
+  order's `count - made` in queue order. The first `B` places are the band's, the next `covered` the
+  tribe's; an order's `forTribe` is the overlap of its units with the tribe's places (in items). An order
+  auto-craft queued from a tribe-only suggestion therefore reads `forTribe == count`.
+- A band in no tribe publishes `0` and `false` everywhere. Auto-craft is unchanged: it counts every row.
+
+Pinned off the encoded frame by `core_sim/tests/bench_for_tribe.rs` (declared-build line, levy take row,
+the split, the queue order, auto-craft) and `tests/tribe_levy.rs::a_tribe_roads_short_builders_kit_is_marked_for_the_tribe`.
+
 ## Kit orders — a whole kit queued as ONE grouped order (#780)
 
 Design: `docs/plan_crafting_and_materials.md` §7, "Ordering a whole kit". A kit is a set of items for a

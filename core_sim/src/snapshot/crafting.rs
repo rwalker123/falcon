@@ -646,6 +646,8 @@ fn bench_orders(
                     .unwrap_or_default(),
                 drawn_inputs,
                 lent_to_hunt: 0,
+                // Stamped by the capture (`snapshot::population`), which holds the shortfall lines.
+                for_tribe: 0,
             }
         })
         .collect()
@@ -932,6 +934,7 @@ pub(crate) fn craft_suggestion_states(
             reason: suggestion.reason,
             bench_turns_saved: suggestion.bench_turns_saved,
             bench_build_turns: suggestion.bench_build_turns,
+            for_tribe_count: suggestion.for_tribe_count,
             sources: suggestion
                 .sources
                 .into_iter()
@@ -940,6 +943,7 @@ pub(crate) fn craft_suggestion_states(
                         missing_units: line.missing_units,
                         workers_without: line.workers_without,
                         work_per_turn: line.work_per_turn,
+                        for_tribe: line.for_tribe,
                         ..CraftSuggestionSourceState::default()
                     };
                     let target = match &line.source {

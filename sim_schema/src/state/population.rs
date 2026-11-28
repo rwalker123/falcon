@@ -2707,6 +2707,10 @@ pub struct BenchOrderState {
     /// **This order's share of next turn's muster.**
     #[serde(default)]
     pub lent_to_hunt: u32,
+    /// **The items of this order still to make that are for the tribe** (levy rows' units): the
+    /// queue meets the band's own demand first, then the tribe's. Derived each turn.
+    #[serde(default)]
+    pub for_tribe: u32,
 }
 
 /// **One craft suggestion** — an item the band's consumers went without, and how many to make. A row
@@ -2749,6 +2753,10 @@ pub struct CraftSuggestionState {
     /// The same tool's cost in the same crew-free bench turns; `0` on every other suggestion.
     #[serde(default)]
     pub bench_build_turns: f32,
+    /// **The units of [`Self::count`] owed to levy rows**, the band's own demand being met first by
+    /// the queue; never above `count`.
+    #[serde(default)]
+    pub for_tribe_count: u32,
 }
 
 /// **One consumer going without a suggested item** — a row of [`CraftSuggestionState::sources`].
@@ -2769,6 +2777,10 @@ pub struct CraftSuggestionSourceState {
     pub workers_without: f32,
     /// `workers_without × build_work` on a pool, site or queued build; `0` on a take row.
     pub work_per_turn: f32,
+    /// The consumer is a levy row (a tribe's work on this band's list), or a declared build whose
+    /// builders are one.
+    #[serde(default)]
+    pub for_tribe: bool,
 }
 
 /// **One material of the pile a bench has already withdrawn** for the items in flight - a row of

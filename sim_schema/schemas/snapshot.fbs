@@ -5386,6 +5386,11 @@ table BenchOrder {
   drawnInputs:[DrawnInput];
   // THIS ORDER'S SHARE OF NEXT TURN'S MUSTER.
   lentToHunt:uint = 0;
+  // THE ITEMS OF THIS ORDER STILL TO MAKE (`count - made`) THAT ARE FOR THE TRIBE - made for levy rows,
+  // which have no bench of their own. Derived every turn: the queue meets the band's own demand for
+  // the item first (in queue order), then the tribe's, and this order's share of the tribe's units is
+  // what this reports. 0 for a band in no tribe and for an order nobody levied.
+  forTribe:uint = 0;
 }
 
 // ONE WHOLE-KIT ORDER on the bench's queue (#780) - what `bench_enqueue_kit` queued. `done` is the
@@ -5450,6 +5455,10 @@ table CraftSuggestion {
   // The same tool's cost in the same crew-free bench turns: its recipe's work over the rate the
   // bench would work it at. Always below benchTurnsSaved on a bench-tool suggestion; 0 otherwise.
   benchBuildTurns:float = 0;
+  // THE UNITS OF `count` OWED TO LEVY ROWS (a tribe's work on this band's list): the whole shortfall of
+  // the item's levy consumers, less what the queue covers once it has met the band's own demand first.
+  // Never above `count`. 0 for a band in no tribe. Derived every turn, not saved.
+  forTribeCount:uint = 0;
 }
 
 // ONE CONSUMER GOING WITHOUT AN ITEM — a row of CraftSuggestion.sources, keyed so the client can
@@ -5477,6 +5486,9 @@ table CraftSuggestionSource {
   missingUnits:float;          // (required − filled), never below 0, in units of the item
   workersWithout:float;        // missingUnits x the item's workers_per_unit
   workPerTurn:float = 0;       // workersWithout x build_work on a pool, site or declared build; 0 on a take row
+  // This consumer is a levy row (a tribe's work on this band's list), or a declared build whose
+  // builders are one. False on a pool, a site crew and the bench's own line.
+  forTribe:bool = false;
 }
 
 // ONE ROW PER RECIPE, ALWAYS — a row of PopulationCohortState.craftOffers.

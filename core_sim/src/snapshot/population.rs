@@ -507,6 +507,7 @@ fn need_row_assessment(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn hunt_turn_lines(
     allocation: &LaborAllocation,
+    levied_roads: &[UVec2],
     idle: u32,
     is_local: &dyn Fn(&LaborTarget) -> bool,
     bench: Option<crate::components::MusterBench>,
@@ -539,6 +540,7 @@ pub(crate) fn hunt_turn_lines(
     });
     Some(crate::craft_suggestions::band_tool_shortfall_lines(
         &pass.allocation,
+        levied_roads,
         take_rows,
         equipment,
     ))
@@ -1470,6 +1472,9 @@ pub(crate) struct PopulationStateInputs<'a> {
     /// The formed tribe the band belongs to; `None` in no tribe, for a foreign or detached row and
     /// for a hand-built fixture.
     pub(crate) tribe_membership: Option<TribeMembership>,
+    /// **The road tiles whose builds are this band's tribe levy** (`tribe_levy::band_levied_road_tiles`),
+    /// so a levy road build's tools read for the tribe in the craft suggestions.
+    pub(crate) levied_roads: Vec<UVec2>,
     /// The band's own settlement stage as `advance_settlements` resolved it (an index into the
     /// stage config); `None` before any turn has resolved it, which publishes the stage its people
     /// alone reach.
@@ -2050,6 +2055,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
         leadership_threshold,
         tribe,
         tribe_membership,
+        levied_roads,
         settlement_stage,
         reach,
         cohort,
@@ -3005,6 +3011,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
     let hunt_turn_lines = match (expedition, allocation) {
         (None, Some(alloc)) => hunt_turn_lines(
             alloc,
+            &levied_roads,
             idle_workers,
             &donor_is_local,
             donor_bench.clone(),
@@ -3027,6 +3034,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 });
             let mut suggestions = crate::craft_suggestions::band_suggestions(
                 alloc,
+                &levied_roads,
                 take_rows,
                 hunt_turn_lines.as_deref(),
                 bench,
@@ -3100,6 +3108,38 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                         equipment: craft_inputs.equipment,
                     });
             }
+            // **WHICH OF EACH ORDER'S ITEMS ARE FOR THE TRIBE** - the same lines and the same winning
+            // pass Make next ranks by, split band-first then tribe (`bench_orders_for_tribe`).
+            if let Some(bench) = bench {
+                let tribe_rows = row_gear
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(row, (_, _, kit_toe))| {
+                        kit_toe.iter().map(move |line| {
+                            (row, line.item_id.as_str(), line.required, line.filled)
+                        })
+                    });
+                let lines = crate::craft_suggestions::band_tool_shortfall_lines(
+                    alloc,
+                    &levied_roads,
+                    tribe_rows,
+                    craft_inputs.equipment,
+                );
+                let passes: Vec<&[crate::craft_suggestions::ToolShortfallLine]> =
+                    std::iter::once(lines.as_slice())
+                        .chain(hunt_turn_lines.as_deref())
+                        .collect();
+                let demands =
+                    crate::craft_suggestions::tribe_demands(&passes, craft_inputs.equipment);
+                let shares = crate::craft_suggestions::bench_orders_for_tribe(
+                    bench,
+                    craft_inputs.recipes,
+                    &demands,
+                );
+                for (order, share) in bench_state.orders.iter_mut().zip(shares) {
+                    order.for_tribe = share;
+                }
+            }
             let mut states = crate::snapshot::crafting::craft_suggestion_states(suggestions);
             // **What the whole count needs that the stock cannot cover**, off the same forecast the
             // bench's orders publish — a suggestion lands at the queue's end.
@@ -3130,6 +3170,7 @@ pub(crate) fn population_state(inputs: PopulationStateInputs<'_>) -> PopulationC
                 });
             let lines = crate::craft_suggestions::band_tool_shortfall_lines(
                 alloc,
+                &levied_roads,
                 take_rows,
                 craft_inputs.equipment,
             );
@@ -4225,6 +4266,7 @@ mod tests {
             leadership_threshold: 0.0,
             tribe: None,
             tribe_membership: None,
+            levied_roads: Vec::new(),
             settlement_stage: None,
             reach: ReachReadout::default(),
             // No world, so no outfitting window either.

@@ -1518,6 +1518,7 @@ mod tests {
             leadership_threshold: 0.0,
             tribe: None,
             tribe_membership: None,
+            levied_roads: Vec::new(),
             settlement_stage: None,
             reach: Default::default(),
             // No world, so no outfitting window either.

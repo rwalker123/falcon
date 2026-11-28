@@ -1730,6 +1730,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             let _ = row.insert("bench_tool", order.benchTool().unwrap_or(""));
             let _ = row.insert("drawn_inputs", &drawn_inputs_to_array(order.drawnInputs()));
             let _ = row.insert("lent_to_hunt", i64::from(order.lentToHunt()));
+            // The items still to make (`count - made`) that are for the tribe's rows; `0` = none.
+            let _ = row.insert("for_tribe", i64::from(order.forTribe()));
             bench_orders.push(&row.to_variant());
         }
     }
@@ -1806,6 +1808,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // on every other suggestion.
             let _ = row.insert("bench_turns_saved", suggestion.benchTurnsSaved() as f64);
             let _ = row.insert("bench_build_turns", suggestion.benchBuildTurns() as f64);
+            // The units of `count` owed to the tribe's (levy) rows; `0` = none.
+            let _ = row.insert("for_tribe_count", i64::from(suggestion.forTribeCount()));
             let mut sources = VarArray::new();
             if let Some(list) = suggestion.sources() {
                 for source in list.iter() {
@@ -1822,6 +1826,8 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
                     let _ = entry.insert("missing_units", source.missingUnits() as f64);
                     let _ = entry.insert("workers_without", source.workersWithout() as f64);
                     let _ = entry.insert("work_per_turn", source.workPerTurn() as f64);
+                    // This consumer is a tribe (levy) row.
+                    let _ = entry.insert("for_tribe", source.forTribe());
                     sources.push(&entry.to_variant());
                 }
             }
