@@ -504,6 +504,11 @@ fn the_frame_carries_the_offer_on_every_member_and_the_ids_parallel_the_names() 
             .find(|row| row.bandId() == id(n).0)
             .expect("the member is on the wire");
         assert_eq!(row.tribeId(), tribe.0, "band {n} names its tribe");
+        assert_ne!(
+            row.tribeId(),
+            0,
+            "a formed tribe never publishes the no-tribe id"
+        );
         let proposal = row.tribeProposal().expect("a proposal row");
         assert_eq!(proposal.key(), Some("monument@10,10"), "band {n}");
         assert_eq!(proposal.kind(), Some("monument"));

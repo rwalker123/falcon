@@ -49,6 +49,9 @@ const CULTURE_AXIS_RANGE: f32 = 2.0 * CULTURE_TRAIT_SPAN;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TribeId(pub u64);
 
+/// The first id a formed tribe takes. `0` is the wire's "in no tribe" (`tribeId`), so it names none.
+pub const FIRST_TRIBE_ID: u64 = 1;
+
 /// What kind of leadership a tribe follows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TribeLeaderKind {
@@ -332,9 +335,12 @@ impl TribeRegistry {
         self.formed.get(&faction).copied().unwrap_or(0)
     }
 
+    /// **Ids start at [`FIRST_TRIBE_ID`]**: the wire's `tribeId` reads `0` as "in no tribe", so a
+    /// formed tribe must never be numbered `0` (the first tribe once was, and every client treated it
+    /// as no tribe at all).
     fn allocate(&mut self) -> TribeId {
-        let id = TribeId(self.next_id);
-        self.next_id += 1;
+        let id = TribeId(self.next_id.max(FIRST_TRIBE_ID));
+        self.next_id = id.0 + 1;
         id
     }
 }
