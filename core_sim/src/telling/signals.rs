@@ -66,8 +66,14 @@ pub const SETTLEMENT_CITY_REACHED: &str = "settlement.city_reached";
 /// The id of the stage row [`SETTLEMENT_CITY_REACHED`] reads.
 pub const SETTLEMENT_CITY_STAGE_ID: &str = "city";
 
+/// How many of the player's resident bands are in a breeding population the inbreeding ceiling cut
+/// this turn's births for (`BreedingReading::capped`) — a level, so a beat gates on `crosses`
+/// rising through `1`. A band whose reading was grouped under another people is not counted (the
+/// guard `systems::breeding_shed` uses).
+pub const LINEAGE_BREEDING_CAPPED: &str = "lineage.breeding_capped";
+
 /// Every signal id content may reference, other than the per-axis culture family.
-const BASE_SIGNALS: [&str; 17] = [
+const BASE_SIGNALS: [&str; 18] = [
     VOICE_MEDIUM_INDEX,
     "turn.index",
     "band.count",
@@ -82,6 +88,7 @@ const BASE_SIGNALS: [&str; 17] = [
     "leadership.bands_hungry_under_leader",
     "leadership.bands_leader_failing",
     "leadership.bands_leader_delivering",
+    LINEAGE_BREEDING_CAPPED,
     "discovery.progress.cultivation",
     "discovery.progress.herding",
     "fauna.collapsing_group_count",
@@ -295,6 +302,18 @@ pub fn sample_signals(sources: &SignalSources<'_>) -> (SignalSample, CumulativeT
         "leadership.bands_leader_delivering",
         led()
             .filter(|band| band.cohort.last_morale_contributions.leadership > scalar_zero())
+            .count() as f64,
+    );
+
+    sample.set(
+        LINEAGE_BREEDING_CAPPED,
+        sources
+            .bands
+            .iter()
+            .filter(|band| {
+                band.cohort.last_breeding.capped
+                    && band.cohort.last_breeding.faction == Some(band.cohort.faction)
+            })
             .count() as f64,
     );
 
