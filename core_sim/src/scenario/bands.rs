@@ -88,7 +88,9 @@ pub struct BandEntry {
     pub founding_lines: u16,
     /// The larder, exactly: an empty list is an empty larder.
     pub larder: Vec<LarderEntry>,
-    /// The ONE optional key: absent keeps the default outfit fitted to this band's size.
+    /// The ONE optional key. Absent keeps the default outfit fitted to the faction's FIRST band's size;
+    /// a later band has no default outfit (shipped `start_stock_fraction` is `0.0`), so it opens with
+    /// no gear unless it states `stock`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outfit: Option<Outfit>,
     /// `true` gives the band a leader ([`apply_leaders`]); absent leaves it to emergence. The file names
@@ -102,7 +104,8 @@ pub struct BandEntry {
     /// A settled stock the band holds at load, on top of its outfit: kits, loose equipment items
     /// (the bench tools no kit names) and materials, written straight into the band's inventory,
     /// outside the carry cap. Applied after the outfitting windows close, so it is valid whether
-    /// `opening` is true or false. Absent adds nothing.
+    /// `opening` is true or false. Absent adds nothing; this is how a band other than the faction's
+    /// first is equipped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stock: Option<Stock>,
 }

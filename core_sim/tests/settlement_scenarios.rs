@@ -30,6 +30,9 @@ const CITY_BEAT_GLOSS: &str = "settlement.city_reached=";
 
 fn try_load(text: &str) -> Result<App, Vec<ScenarioRefusal>> {
     let mut app = build_test_app();
+    // The shipped equipment config, not `build_test_app`'s stocked fixture: the real game spawns a
+    // band owning no gear, so what these files equip is what a playtester gets.
+    app.world.insert_resource(EquipmentConfigHandle::default());
     let plan = parse_scenario(text, &ScenarioContext::from_world(&app.world))?;
     build_scenario_world(&mut app, &plan)?;
     Ok(app)

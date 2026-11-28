@@ -100,7 +100,7 @@ There is no scenario special case after Startup. `ScenarioSetup` is inserted **b
   `1.0`) into the same discovery ledger the game reads, replacing the archetype's own grant of the
   same tag, so `knows_messengers` and every other `progress >= completion_threshold` gate answer
   yes on turn one.
-- The default outfit is fitted on the world-build pass against the band the scenario built.
+- The default outfit is fitted on the world-build pass against the band the scenario built, and only for each faction's FIRST listed band (the one `stamp_starting_loadout` opens the outfitting window on). A later band opens with no gear under shipped config (`start_stock_fraction` `0.0`) unless the file gives it `stock`, which is how a later band is equipped.
 - `finish_scenario` applies the **setters** first: the herd and deposit fits are collected
   together and any refusal stops the load before either is applied, then the herds, the deposit
   stocks, the held rungs (each rung of the climb through the build gate), and the held roads
