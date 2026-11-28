@@ -1,0 +1,227 @@
+{
+  "name": "tribe_forming_playtest",
+  "opening": false,
+  "note": "Three kin chief bands (150 people each, three tiles apart, one people sharing the 12-belief gathering place at (13, 11)) open with NO tribe: nothing founds it at load. Watch the pairs earn their closeness (about 5.7 points a turn each toward 100) and the three Band panel entries fold into one tribe on turn 18; that same turn the tribe leader's first proposal, a monument at the gathering place, appears (Ritual is known). Elders keep each band's food. The settlement stage is not this file's story.",
+  "world": {
+    "preset": "earthlike",
+    "width": 80,
+    "height": 52,
+    "seed": 41733,
+    "profile": "late_forager_tribe",
+    "archetypes": {
+      "major": 0,
+      "minor": 0
+    }
+  },
+  "factions": [
+    {
+      "faction": 0,
+      "knowledge": [
+        "messengers",
+        "ritual",
+        "storage",
+        "knapping",
+        "woodcraft",
+        "bone_working",
+        "tanning",
+        "weaving",
+        "herd_lore",
+        "travois",
+        "cultivation",
+        "herding",
+        "seed_selection",
+        "worked_land",
+        "penning"
+      ],
+      "rungs": [],
+      "bands": [
+        {
+          "id": "home",
+          "at": [
+            13,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.2,
+            "working": 0.7,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 700.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 110,
+              "big_game": 12,
+              "sledding": 20,
+              "tillage": 12,
+              "hurdling": 12
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "east",
+          "at": [
+            16,
+            11
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.2,
+            "working": 0.7,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 700.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        },
+        {
+          "id": "south",
+          "at": [
+            13,
+            14
+          ],
+          "size": 150,
+          "ages": {
+            "children": 0.2,
+            "working": 0.7,
+            "elders": 0.1
+          },
+          "founding_lines": 8,
+          "larder": [
+            {
+              "class": "dry",
+              "amount": 700.0
+            }
+          ],
+          "leader": true,
+          "auto_craft": true,
+          "stock": {
+            "kits": {
+              "gathering": 20,
+              "big_game": 12,
+              "trapping": 12,
+              "sledding": 12,
+              "tillage": 8,
+              "hurdling": 8
+            },
+            "items": {
+              "loom": 1,
+              "tanning_frame": 1,
+              "bone_awl": 1,
+              "billet": 1,
+              "axe": 6,
+              "wedges": 6
+            },
+            "materials": {
+              "bone": 6,
+              "fibre": 80,
+              "hide": 40,
+              "wood": 30,
+              "stone": 15
+            }
+          }
+        }
+      ],
+      "labor": [],
+      "roads": [],
+      "pens": [],
+      "bench": []
+    }
+  ],
+  "tiles": [
+    {
+      "at": [
+        13,
+        11
+      ],
+      "belief": 12.0
+    }
+  ],
+  "herds": [
+    {
+      "id": "boar_a",
+      "species": "boar",
+      "at": [
+        11,
+        10
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "fowl_a",
+      "species": "fowl",
+      "at": [
+        16,
+        11
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    },
+    {
+      "id": "sheep_b",
+      "species": "wild_sheep",
+      "at": [
+        13,
+        15
+      ],
+      "stock": 1.0,
+      "origin": "worldgen"
+    }
+  ],
+  "deposits": []
+}

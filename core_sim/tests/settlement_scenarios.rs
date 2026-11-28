@@ -540,3 +540,52 @@ fn a_negative_or_repeated_stock_count_is_refused() {
         .replace("\"items\":{}", "\"items\":{\"loom\":1,\"loom\":2}");
     assert!(try_load(&repeated).is_err());
 }
+
+const FORMING: &str = include_str!("../scenarios/tribe_forming_playtest.json");
+
+/// The turn (turns run after load) the measured tribe forms: three kin chief bands a few tiles apart
+/// bank about 5.7 points a turn per pair against the 100-point threshold.
+const FORMING_TURN: u32 = 18;
+/// The slack the pace is pinned with: formed by `FORMING_TURN + SLACK`, not before `FORMING_TURN - SLACK`.
+const FORMING_SLACK: u32 = 3;
+
+/// The monument offer the tribe leader has on the book, if any.
+fn tribe_offer(app: &App) -> Option<sim_schema::TribeProposalState> {
+    app.world
+        .resource::<core_sim::tribe_proposals::TribeProposalBook>()
+        .tribes
+        .values()
+        .find_map(|state| state.current.clone())
+}
+
+#[test]
+fn the_forming_scenario_opens_with_no_tribe_and_three_bands_become_one_that_proposes_a_monument() {
+    let mut app = load(FORMING);
+    assert_eq!(
+        app.world.resource::<TribeRegistry>().len(),
+        0,
+        "no tribe at load"
+    );
+    let mut formed_on = None;
+    for turn in 1..=FORMING_TURN + FORMING_SLACK {
+        run_turn(&mut app);
+        if formed_on.is_none() && app.world.resource::<TribeRegistry>().len() == 1 {
+            formed_on = Some(turn);
+            assert_eq!(members(&app), 3, "all three bands are members");
+            assert_eq!(
+                tribe_offer(&app).map(|offer| offer.kind),
+                Some("monument".to_string()),
+                "the leader's first offer is the monument, the turn the tribe forms"
+            );
+        }
+        if turn < FORMING_TURN - FORMING_SLACK {
+            assert_eq!(
+                app.world.resource::<TribeRegistry>().len(),
+                0,
+                "no tribe on turn {turn}: the pairs are still banking"
+            );
+        }
+    }
+    let formed_on = formed_on.expect("the tribe forms within the measured window");
+    println!("tribe formed on turn {formed_on} after load");
+}
