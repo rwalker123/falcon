@@ -424,6 +424,8 @@ func _ready() -> void:
             hud.connect("upkeep_mode_requested", Callable(self, "_on_hud_upkeep_mode"))
         if hud.has_signal("tribe_scout_requested") and not hud.is_connected("tribe_scout_requested", Callable(self, "_on_hud_tribe_scout")):
             hud.connect("tribe_scout_requested", Callable(self, "_on_hud_tribe_scout"))
+        if hud.has_signal("tribe_command_requested") and not hud.is_connected("tribe_command_requested", Callable(self, "_on_hud_tribe_command")):
+            hud.connect("tribe_command_requested", Callable(self, "_on_hud_tribe_command"))
         if hud.has_signal("open_borders_requested") and not hud.is_connected("open_borders_requested", Callable(self, "_on_hud_open_borders")):
             hud.connect("open_borders_requested", Callable(self, "_on_hud_open_borders"))
         if hud.has_signal("diplomacy_command_requested") and not hud.is_connected("diplomacy_command_requested", Callable(self, "_on_hud_diplomacy_command")):
@@ -2425,6 +2427,16 @@ static func format_chief_proposal(payload: Dictionary) -> Dictionary:
     if band_id == HudConst.NO_BAND_ID:
         return {}
     var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    # **A TRIBE LEADER'S PROPOSAL carries the tribe flag and goes out as `tribe_proposal`, NEVER as
+    # `approve_proposal`**: `tribe_proposal <f> <b> approve|defer <key>`, addressed by the tribe's first member.
+    if bool(payload.get(HudTribeVocab.ORB_PROPOSAL_TRIBE_FLAG, false)):
+        var key := String(payload.get("build_key", "")).strip_edges()
+        var action := String(payload.get("action", ""))
+        if key == "" or (action != HudTribeVocab.ORB_APPROVE and action != HudTribeVocab.ORB_DEFER):
+            return {}
+        return {"line": "tribe_proposal %d %d %s %s" % [faction, band_id, action, key],
+            "message": "Approved the tribe leader's proposal." if action == HudTribeVocab.ORB_APPROVE \
+                else "Not now."}
     match String(payload.get("action", "")):
         "approve":
             return {
@@ -2591,6 +2603,46 @@ static func format_tribe_scout(payload: Dictionary) -> Dictionary:
         "line": "tribe_scout %d %d %d" % [faction, band_id, maxi(int(payload["range"]), 0)],
         "message": HudWorkVocab.SCOUT_TRIBE_COMMAND_MESSAGE,
     }
+
+## **THE TRIBE'S OWN COMMANDS**, each addressed by the tribe's first member band (`band_id`):
+##   `tribe_work <f> <b> <branch> <x> <y> [<rung>] [high|normal|low]` - start or update a shared work, `rung` the
+##       catalog's own `<branch>:<rung>` id (omitted keeps what stands);
+##   `tribe_work <f> <b> stop <branch> <x> <y>` - put one down;
+##   `tribe_levy <f> <b> none|low|normal|high` - the levy ceiling.
+## Declines on a missing band, branch, tile or unknown level rather than guessing one.
+static func format_tribe_command(payload: Dictionary) -> Dictionary:
+    var band_id := int(payload.get("band_id", HudConst.NO_BAND_ID))
+    if band_id == HudConst.NO_BAND_ID:
+        return {}
+    var faction := int(payload.get("faction", HudConst.PLAYER_FACTION_ID))
+    match String(payload.get(HudTribeVocab.ACTION_KEY, "")):
+        HudTribeVocab.COMMAND_LEVY:
+            var level := String(payload.get("level", "")).strip_edges().to_lower()
+            var known := false
+            for entry in HudTribeVocab.LEVY_LEVELS:
+                known = known or String(entry["token"]) == level
+            if not known:
+                return {}
+            return {"line": "tribe_levy %d %d %s" % [faction, band_id, level],
+                "message": "Set the tribe's levy to %s." % level}
+        HudTribeVocab.COMMAND_STOP, HudTribeVocab.COMMAND_WORK:
+            var branch := String(payload.get("branch", "")).strip_edges()
+            var x := int(payload.get("x", -1))
+            var y := int(payload.get("y", -1))
+            if branch == "" or x < 0 or y < 0:
+                return {}
+            if String(payload[HudTribeVocab.ACTION_KEY]) == HudTribeVocab.COMMAND_STOP:
+                return {"line": "tribe_work %d %d stop %s %d %d" % [faction, band_id, branch, x, y],
+                    "message": "Stopped the tribe's work at (%d, %d)." % [x, y]}
+            var line := "tribe_work %d %d %s %d %d" % [faction, band_id, branch, x, y]
+            var rung := String(payload.get("rung", "")).strip_edges()
+            if rung != "":
+                line += " " + rung
+            var priority := String(payload.get("priority", "")).strip_edges().to_lower()
+            if priority != "":
+                line += " " + priority
+            return {"line": line, "message": "Joined the tribe's shared works at (%d, %d)." % [x, y]}
+    return {}
 
 ## **`band_order <faction> <band_id> <kind> set <target> <priority> | release [<x> <y> | <herd_id>] |
 ## claim [<x> <y> | <herd_id>]`** -- a band's standing order to its leader (#860). `kind` is `food`,
@@ -2960,6 +3012,10 @@ func _on_hud_upkeep_mode(payload: Dictionary) -> void:
 ## Set a tribe's scouting range. No optimistic write: the next snapshot carries the tribe's range.
 func _on_hud_tribe_scout(payload: Dictionary) -> void:
     _send_formatted_command(format_tribe_scout(payload))
+
+## Send a tribe-addressed command. No optimistic write: the next snapshot carries `tribe_works` and the ceiling.
+func _on_hud_tribe_command(payload: Dictionary) -> void:
+    _send_formatted_command(format_tribe_command(payload))
 
 ## Send a band order (set / release / claim). No optimistic write: the server restaffs at once and the
 ## next snapshot carries the order and its rows.

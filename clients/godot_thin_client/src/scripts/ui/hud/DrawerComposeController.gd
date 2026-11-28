@@ -93,6 +93,12 @@ signal road_improvement_requested(payload: Dictionary)
 ## optimistic write**, exactly as the declaration beside it: a road has no labor row to shadow.
 signal road_abandon_requested(payload: Dictionary)
 
+## **A SHARED WORK STARTED FOR A TRIBE** (`.claude/rules/client/tribe-panel.md`): the `Band:` picker named the
+## tribe, so a road's grade / pave or a tile branch's crew goes out as `tribe_work <f> <b> <branch> <x> <y>
+## [<rung>]` through `HudLayer.tribe_command_requested`, never as `build ...` / `assign_labor`. No optimistic
+## write: a tribe's work has no labor row on any band until the sim deals it.
+signal tribe_command_requested(payload: Dictionary)
+
 ## **THERE IS NO KEEPING SIGNAL HERE** (`docs/plan_standing_upkeep.md` §2.5). `maintain_requested`
 ## retired with the `maintain` command it carried: maintenance left the tile, so the keeping is
 ## staffed as a band-wide standing role from the Band panel's WORKFORCE zone and this sheet has no
@@ -180,6 +186,11 @@ var _road_ladder_body: MarginContainer = null
 ## the track is resolved against the acting band, so a stale row would offer a rung the newly-chosen
 ## band cannot have.
 var _road_ladder_band_entity: int = ComposeState.NO_BAND_ENTITY
+## The tribe the road card's `Band:` picker names (`HudTribeVocab.NO_TRIBE` while a band is picked), the tile
+## crew sheet's twin below, and the fold both pickers share - it starts CLOSED each time a card opens.
+var _road_ladder_tribe_id: int = HudTribeVocab.NO_TRIBE
+var _tile_tribe_id: int = HudTribeVocab.NO_TRIBE
+var _tribe_picker_open: bool = false
 var _road_ladder_tile: Dictionary = {}
 var _road_ladder_index: int = -1
 
@@ -1719,7 +1730,15 @@ func _yield_preview_bbcode(model: Dictionary, overdraw_suffix: String) -> String
 ## row one family: one declared key width, one ghost chrome, one height. It used to be a bare
 ## `OptionButton` on a natural-width label — the only off-palette control on the sheet, and the one
 ## whose value box started at a different x from every other row's.
-func _build_band_picker(selected_band: Dictionary, on_pick: Callable) -> HBoxContainer:
+func _build_band_picker(selected_band: Dictionary, on_pick: Callable,
+        tribe: Dictionary = {}) -> HBoxContainer:
+    # **A TRIBE STANDS IN FOR ITS MEMBERS** on the cards that start a shared work (`tribe` carries `tribe_id`,
+    # `on_tribe`, `on_fold`); the hunt / forage / deposit sheets pass none, so a source stays a band's.
+    if not tribe.is_empty() and TribePicker.has_tribe(_band_labor.current_player_bands()):
+        return TribePicker.build_row(_band_labor.current_player_bands(), selected_band,
+            int(tribe.get("tribe_id", HudTribeVocab.NO_TRIBE)), _tribe_picker_open,
+            func(entity: int) -> void: on_pick.call(_band_labor.player_band_by_entity(entity)),
+            tribe["on_tribe"], tribe["on_fold"])
     var row := HBoxContainer.new()
     row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
@@ -4890,8 +4909,10 @@ func _open_road_ladder(tile_info: Dictionary, index: int, anchor: Control) -> vo
     # and roads escaped it because a road has no work row to infer an owner from.
     _road_ladder_tile = tile_info
     _road_ladder_index = index
-    _road_ladder_band_entity = int(_default_road_band(road, tile_info).get(
-        "entity", ComposeState.NO_BAND_ENTITY))
+    var default_band := _default_road_band(road, tile_info)
+    _road_ladder_band_entity = int(default_band.get("entity", ComposeState.NO_BAND_ENTITY))
+    _road_ladder_tribe_id = _default_road_tribe(road, default_band)
+    _tribe_picker_open = false
     var card := _ensure_road_ladder()
     _fill_road_ladder()
     card.popup(_road_ladder_anchor_rect(anchor))
@@ -4909,6 +4930,12 @@ func _fill_road_ladder() -> void:
     var road: Dictionary = roads[_road_ladder_index]
     var ladder := HudRouteVocab.route_ladder(_topbar.route_rungs())
     var band := _band_labor.player_band_by_entity(_road_ladder_band_entity)
+    var tribe_members: Array = TribeRoster.members(_band_labor.current_player_bands(), _road_ladder_tribe_id) \
+        if _road_ladder_tribe_id != HudTribeVocab.NO_TRIBE else []
+    if _road_ladder_tribe_id != HudTribeVocab.NO_TRIBE and tribe_members.is_empty():
+        _road_ladder_tribe_id = HudTribeVocab.NO_TRIBE
+    if not tribe_members.is_empty():
+        band = TribeRoster.address_band(tribe_members)
     # ⛔ **THE KEEPER'S NAME IS RESOLVED HERE AND NOWHERE ELSE**, the tile card's own rule one block
     # up: a road carries a `band_id`, this client has exactly one band-naming rule, and the gate
     # layer is stateless and holds no roster. `""` for a band outside the player's roster, which the
@@ -4944,6 +4971,15 @@ func _fill_road_ladder() -> void:
         # The press closes the card BEFORE it emits, the destination track's own rule: the declaration
         # re-renders the drawer this card is anchored to.
         _dismiss_road_ladder()
+        if not tribe_members.is_empty():
+            # A tribe's road is a SHARED work: `tribe_work <f> <b> route <x> <y> <rung>`, then its page.
+            if verb != building_verb:
+                _emit_tribe_command(_tribe_ctx_of(tribe_members), HudTribeVocab.COMMAND_WORK, HudTribeVocab.ROAD_BRANCH,
+                    int(_road_ladder_tile.get("x", -1)), int(_road_ladder_tile.get("y", -1)),
+                    _road_rung_key(verb))
+            if _bandpanel != null:
+                _bandpanel.show_tribe_work(TribeRoster.tribe_id_of(band))
+            return
         if verb != building_verb:
             _emit_road_improvement(band, _road_ladder_tile, verb)
         # **THE BAND IS THE `Band:` PICKER'S**, which is the band the entry is being made for and
@@ -5009,8 +5045,38 @@ func _build_road_band_picker(selected: Dictionary) -> HBoxContainer:
     if _band_labor.current_player_bands().is_empty():
         return null
     return _build_band_picker(selected, func(picked: Dictionary) -> void:
+        _road_ladder_tribe_id = HudTribeVocab.NO_TRIBE
         _road_ladder_band_entity = int(picked.get("entity", ComposeState.NO_BAND_ENTITY))
-        _fill_road_ladder())
+        _fill_road_ladder(), {
+            "tribe_id": _road_ladder_tribe_id,
+            "on_tribe": func(tribe_id: int) -> void:
+                _road_ladder_tribe_id = tribe_id
+                _fill_road_ladder(),
+            "on_fold": func() -> void:
+                _tribe_picker_open = not _tribe_picker_open
+                _fill_road_ladder()})
+
+## **THE ROAD CARD'S DEFAULT TRIBE**: the nearest band's tribe, unless the road already has a keeper in the
+## roster (that band keeps it - re-issuing is the ordinary case) or the Band panel is on a member of that
+## tribe, which keeps the old nearest-band default.
+func _default_road_tribe(road: Dictionary, default_band: Dictionary) -> int:
+    var tribe_id := TribeRoster.tribe_id_of(default_band)
+    if tribe_id == HudTribeVocab.NO_TRIBE:
+        return HudTribeVocab.NO_TRIBE
+    if HudRouteVocab.has_keeper(road) \
+            and not _band_labor.player_band_by_band_id(HudRouteVocab.keeper_band_id_of(road)).is_empty():
+        return HudTribeVocab.NO_TRIBE
+    var drilled := _bandpanel.drilled_member_band() if _bandpanel != null else {}
+    if not drilled.is_empty() and TribeRoster.tribe_id_of(drilled) == tribe_id:
+        return HudTribeVocab.NO_TRIBE
+    return tribe_id
+
+## The route rung a road verb raises, off the world's own catalog; the shipped ids when it names none.
+func _road_rung_key(verb: String) -> String:
+    for entry in HudRouteVocab.route_ladder(_topbar.route_rungs()):
+        if HudRouteVocab.catalog_verb(entry) == verb:
+            return HudRouteVocab.catalog_rung_key(entry)
+    return String(HudTribeVocab.ROAD_VERB_RUNGS.get(verb, ""))
 
 ## ⛔ **THE UNDO FOR A ROAD THAT IS ALREADY SOMEBODY'S JOB**, at the bottom of the card.
 ##
@@ -5209,6 +5275,7 @@ func open_tile_compose(tile_info: Dictionary, branch: String) -> void:
         return
     _ensure_compose_sheet()
     var subject_key := _tile_subject_key(tile_info, branch)
+    _tribe_picker_open = false
     _compose.set_composing(ComposeState.KIND_TILE, subject_key)
     var content := _compose_sheet.open(
         HudComposeVocab.COMPOSE_SHEET_EYEBROW_FORMAT % HudTileVocab.CREW_SHEET_NOUN,
@@ -5237,10 +5304,20 @@ func _build_tile_assign_controls(tile_info: Dictionary, branch: String, target: 
     if source_changed:
         _compose.begin_tile_source(subject_key,
             int(resolved.get("entity", ComposeState.NO_BAND_ENTITY)))
+        _seed_tile_tribe(x, y, branch, resolved)
     var band := _band_labor.player_band_by_entity(_compose.tile_band())
     if band.is_empty():
         band = resolved
         _compose.set_tile_band(int(band.get("entity", ComposeState.NO_BAND_ENTITY)))
+    # **A TRIBE PICKED ON THE `Band:` ROW IS ADDRESSED BY ITS FIRST MEMBER**, and everything below that reads
+    # a band (the strip's gear, the hands) reads that one; the commit is what changes.
+    var tribe_members: Array = TribeRoster.members(_band_labor.current_player_bands(), _tile_tribe_id) \
+        if _tile_tribe_id != HudTribeVocab.NO_TRIBE else []
+    if _tile_tribe_id != HudTribeVocab.NO_TRIBE and tribe_members.is_empty():
+        _tile_tribe_id = HudTribeVocab.NO_TRIBE
+    var tribe_ctx := _tribe_ctx_of(tribe_members)
+    if not tribe_members.is_empty():
+        band = TribeRoster.address_band(tribe_members)
     var band_entity := int(band.get("entity", ComposeState.NO_BAND_ENTITY))
     if source_changed or _compose.tile_seeded_band() != band_entity:
         # Seeded from THIS band's own row (its Max, else the crew the sim struck), else a crew of one.
@@ -5249,52 +5326,115 @@ func _build_tile_assign_controls(tile_info: Dictionary, branch: String, target: 
         if seed <= 0:
             seed = _band_labor.effective_tile_workers(band, x, y, branch)
         _compose.seed_tile(maxi(seed, HudTileVocab.CREW_DEFAULT))
-    var is_working := _band_labor.has_tile_row(band, x, y, branch)
+    var is_working := _tribe_holds_work(tribe_members, x, y, branch) if not tribe_members.is_empty() \
+        else _band_labor.has_tile_row(band, x, y, branch)
     var hands := maxi(int(band.get("working_age", 0)), 0)
+    for member in tribe_members:
+        if member != band:
+            hands += maxi(int((member as Dictionary).get("working_age", 0)), 0)
     _compose.clamp_tile_max(hands, HudTileVocab.CREW_DEFAULT)
     var rebuild := func() -> void:
         _build_tile_assign_controls(_selection.tile_info(), branch, target)
     target.add_child(_build_band_picker(band, func(picked: Dictionary) -> void:
+        _tile_tribe_id = HudTribeVocab.NO_TRIBE
         _compose.set_tile_band(int(picked.get("entity", ComposeState.NO_BAND_ENTITY)))
-        rebuild.call()))
+        rebuild.call(), {
+            "tribe_id": _tile_tribe_id,
+            "on_tribe": func(tribe_id: int) -> void:
+                _tile_tribe_id = tribe_id
+                rebuild.call(),
+            "on_fold": func() -> void:
+                _tribe_picker_open = not _tribe_picker_open
+                rebuild.call()}))
     # **THE WORK STRIP's LADDER CHIP** -- the deposit and forage sheets' own control, built from the Work
     # tab's tile row (`tile_strip_row`), so Monument / Storage pit are one press from the sheet. It draws
     # on every state, a band not yet crewing the tile included: the rung card names the missing crew.
-    _mount_tile_strip(target, band, x, y, branch)
-    var max_row := HBoxContainer.new()
-    max_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    max_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
-    max_row.set_meta(HudTileVocab.CREW_ROW_META, subject_key)
-    max_row.add_child(HudWidgets.build_field_key(HudTileVocab.CREW_STEPPER_LABEL))
-    HudWidgets.add_max_stepper(max_row, _compose.tile_max(), hands, func(n: int) -> void:
-        _compose.set_tile_max(n)
-        if is_working:
-            _send_tile_assignment(band, x, y, branch)
-        rebuild.call(), false, HudTileVocab.CREW_DEFAULT)
-    target.add_child(max_row)
-    target.add_child(HudWidgets.alloc_hint_label(HudTileVocab.CREW_HINT))
+    _mount_tile_strip(target, band, x, y, branch, tribe_ctx)
+    if tribe_members.is_empty():
+        var max_row := HBoxContainer.new()
+        max_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        max_row.add_theme_constant_override("separation", HudWorkVocab.WORKER_STEPPER_SEPARATION)
+        max_row.set_meta(HudTileVocab.CREW_ROW_META, subject_key)
+        max_row.add_child(HudWidgets.build_field_key(HudTileVocab.CREW_STEPPER_LABEL))
+        HudWidgets.add_max_stepper(max_row, _compose.tile_max(), hands, func(n: int) -> void:
+            _compose.set_tile_max(n)
+            if is_working:
+                _send_tile_assignment(band, x, y, branch)
+            rebuild.call(), false, HudTileVocab.CREW_DEFAULT)
+        target.add_child(max_row)
+        target.add_child(HudWidgets.alloc_hint_label(HudTileVocab.CREW_HINT))
+    else:
+        # **A TRIBE'S WORK HAS NO CREW COUNT TO DIAL** - the levy deals the hands - so the sheet says where the
+        # work lands instead.
+        target.add_child(HudWidgets.alloc_hint_label(HudTribeVocab.PICKER_ASIDE))
     var commit := Button.new()
     commit.set_meta(HudWidgets.COMPOSE_COMMIT_META, true)
     commit.text = HudComposeVocab.STOP_WORKING_BUTTON if is_working else HudTileVocab.COMMIT_LABEL
     commit.disabled = hands < HudTileVocab.CREW_DEFAULT
     HudStyle.apply_button(commit, "primary")
     commit.pressed.connect(func() -> void:
-        if is_working:
+        if not tribe_members.is_empty():
+            _emit_tribe_command(tribe_ctx, HudTribeVocab.COMMAND_STOP if is_working \
+                else HudTribeVocab.COMMAND_WORK, branch, x, y, "")
+        elif is_working:
             _emit_tile_stop(band, x, y, branch)
         else:
             _send_tile_assignment(band, x, y, branch)
         close_compose_sheet())
     _mount_commit_row(target, commit, is_working)
 
+## **WHAT THE TILE CREW SHEET OPENS ON**: the tribe, unless a band already crews this tile branch (its own
+## row is then what the sheet edits) or the Band panel is on a member band's own page, which defaults to
+## that band. Only a band in a tribe has a tribe to default to.
+func _seed_tile_tribe(x: int, y: int, branch: String, resolved: Dictionary) -> void:
+    _tile_tribe_id = HudTribeVocab.NO_TRIBE
+    for band_variant in _band_labor.current_player_bands():
+        if band_variant is Dictionary and _band_labor.has_tile_row(band_variant as Dictionary, x, y, branch):
+            return
+    var drilled := _bandpanel.drilled_member_band() if _bandpanel != null else {}
+    if not drilled.is_empty():
+        _compose.set_tile_band(int(drilled.get("entity", ComposeState.NO_BAND_ENTITY)))
+        return
+    _tile_tribe_id = TribeRoster.tribe_id_of(resolved)
+
+## `{faction, band_id}` of the band a tribe command is addressed by (the tribe's first member), `{}` for none.
+func _tribe_ctx_of(members: Array) -> Dictionary:
+    var anchor := TribeRoster.address_band(members)
+    if anchor.is_empty():
+        return {}
+    return {"faction": int(anchor.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(anchor.get("band_id", HudConst.NO_BAND_ID)),
+        "tribe_id": TribeRoster.tribe_id_of(anchor)}
+
+func _tribe_holds_work(members: Array, x: int, y: int, branch: String) -> bool:
+    for work in TribeRoster.works(members):
+        if work is Dictionary and int(work.get(HudTribeVocab.WORK_X, -1)) == x \
+                and int(work.get(HudTribeVocab.WORK_Y, -1)) == y \
+                and String(work.get(HudTribeVocab.WORK_BRANCH, "")) == branch:
+            return true
+    return false
+
+func _emit_tribe_command(ctx: Dictionary, action: String, branch: String, x: int, y: int, rung: String) -> void:
+    if ctx.is_empty():
+        return
+    tribe_command_requested.emit({
+        HudTribeVocab.ACTION_KEY: action,
+        "faction": int(ctx.get("faction", HudConst.PLAYER_FACTION_ID)),
+        "band_id": int(ctx.get("band_id", HudConst.NO_BAND_ID)),
+        "branch": branch, "x": x, "y": y, "rung": rung,
+    })
+
 ## The tile crew sheet's strip, mounted exactly as `_mount_work_strip` mounts a source's: the strip model
 ## off the Work tab's row producer, its handlers the board's own (the chip opens `open_tile_track`).
-func _mount_tile_strip(parent: VBoxContainer, band: Dictionary, x: int, y: int, branch: String) -> void:
+func _mount_tile_strip(parent: VBoxContainer, band: Dictionary, x: int, y: int, branch: String,
+        tribe: Dictionary = {}) -> void:
     if _bandpanel == null:
         return
     var row := _bandpanel.tile_strip_row(band, x, y, branch)
     if row.is_empty():
         return
-    var strip := WorkStrip.build(WorkStrip.model_from_row(row), _bandpanel.strip_handlers(band, row), true)
+    var strip := WorkStrip.build(WorkStrip.model_from_row(row),
+        _bandpanel.strip_handlers(band, row, {}, {}, tribe), true)
     strip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     strip.set_meta(HudTileVocab.STRIP_META, "%d,%d:%s" % [x, y, branch])
     parent.add_child(strip)

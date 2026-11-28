@@ -2033,6 +2033,27 @@ pub struct PopulationCohortState {
     /// The tribe's works, in the order they were added. Appended last.
     #[serde(default)]
     pub tribe_works: Vec<TribeWorkState>,
+    /// The tribe's durable id (`0` = in no tribe). Own member bands only. Appended last.
+    #[serde(default)]
+    pub tribe_id: u64,
+    /// The member bands' ids, parallel to `tribe_member_names`. Appended last.
+    #[serde(default)]
+    pub tribe_member_bands: Vec<u64>,
+    /// What the tribe leader proposes now (empty `key` = nothing). Appended last.
+    #[serde(default)]
+    pub tribe_proposal: TribeProposalState,
+}
+
+/// **THE TRIBE LEADER'S PROPOSAL** - [`PopulationCohortState::tribe_proposal`]. See `snapshot.fbs`'s
+/// `TribeProposalState`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct TribeProposalState {
+    pub key: String,
+    pub kind: String,
+    pub text: String,
+    pub tile_x: u32,
+    pub tile_y: u32,
+    pub for_band: u64,
 }
 
 /// **ONE WORK THE TRIBE OWNS** - a row of [`PopulationCohortState::tribe_works`]. See

@@ -1412,6 +1412,11 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
             // `bare_staffed` above are the scouts' split and `workers` the scouts placed.
             let _ = entry.insert("scouting_range", i64::from(assignment.scoutingRange()));
             let _ = entry.insert("scouting_reach", i64::from(assignment.scoutingReach()));
+            // A TRIBE'S LEVY (#862): `for_tribe` marks a levy row of the band's tribe (or the Scout row
+            // carrying the tribe's range); `scouting_stretch` is, on a tribe member's Scout row, its
+            // share of the tribe's scouting edge (1.0 for a band in no tribe).
+            let _ = entry.insert("for_tribe", assignment.forTribe());
+            let _ = entry.insert("scouting_stretch", f64::from(assignment.scoutingStretch()));
             // An unarmed hand adds nothing on this take row (the sim's `StaffedCrew::bare_idle`).
             let _ = entry.insert("bare_idle", assignment.bareIdle());
             // The band order whose chief works this row (#860): "food" | "fodder" | a material id,
@@ -2268,6 +2273,60 @@ fn population_to_dict(cohort: fb::PopulationCohortState<'_>) -> VarDictionary {
         i64::from(cohort.tribeScoutingRange()),
     );
     let _ = dict.insert("tribe_leader_kind", i64::from(cohort.tribeLeaderKind()));
+    // THE TRIBE ON SCREEN (#863), every own member band: `tribe_id` the tribe's durable id (0 = in no
+    // tribe); `tribe_member_bands` the member `BandId`s, parallel to `tribe_member_names`;
+    // `tribe_levy_ceiling` 0 not in a tribe, 1 none, 2 low, 3 normal, 4 high; `tribe_works` one dict
+    // `{ x, y, branch, target_rung, priority, bands, workers }` per work in the order added (`priority`
+    // the lowercase word, `bands` the carrying `BandId`s nearest first, `workers` the heads on them);
+    // `tribe_proposal` the leader's offer `{ key, kind, text, tile_x, tile_y, for_band }` (an empty `key`
+    // is no proposal; the same dict on every member).
+    let _ = dict.insert("tribe_id", cohort.tribeId() as i64);
+    let mut tribe_member_bands = VarArray::new();
+    if let Some(bands) = cohort.tribeMemberBands() {
+        for band in bands.iter() {
+            tribe_member_bands.push(&(band as i64).to_variant());
+        }
+    }
+    let _ = dict.insert("tribe_member_bands", &tribe_member_bands);
+    let _ = dict.insert("tribe_levy_ceiling", i64::from(cohort.tribeLevyCeiling()));
+    let mut tribe_works = VarArray::new();
+    if let Some(works) = cohort.tribeWorks() {
+        for work in works.iter() {
+            let mut row = VarDictionary::new();
+            let _ = row.insert("x", i64::from(work.x()));
+            let _ = row.insert("y", i64::from(work.y()));
+            let _ = row.insert("branch", work.branch().unwrap_or_default());
+            let _ = row.insert("target_rung", work.targetRung().unwrap_or_default());
+            let _ = row.insert(
+                "priority",
+                match work.priority() {
+                    fb::SourcePriority::High => "high",
+                    fb::SourcePriority::Low => "low",
+                    _ => "normal",
+                },
+            );
+            let mut carriers = VarArray::new();
+            if let Some(bands) = work.bands() {
+                for band in bands.iter() {
+                    carriers.push(&i64::from(band).to_variant());
+                }
+            }
+            let _ = row.insert("bands", &carriers);
+            let _ = row.insert("workers", i64::from(work.workers()));
+            tribe_works.push(&row.to_variant());
+        }
+    }
+    let _ = dict.insert("tribe_works", &tribe_works);
+    let mut tribe_proposal = VarDictionary::new();
+    if let Some(proposal) = cohort.tribeProposal() {
+        let _ = tribe_proposal.insert("key", proposal.key().unwrap_or_default());
+        let _ = tribe_proposal.insert("kind", proposal.kind().unwrap_or_default());
+        let _ = tribe_proposal.insert("text", proposal.text().unwrap_or_default());
+        let _ = tribe_proposal.insert("tile_x", i64::from(proposal.tileX()));
+        let _ = tribe_proposal.insert("tile_y", i64::from(proposal.tileY()));
+        let _ = tribe_proposal.insert("for_band", proposal.forBand() as i64);
+    }
+    let _ = dict.insert("tribe_proposal", &tribe_proposal);
     // The most tiles past the local range a scouting range may name (the stepper's ceiling); the
     // local range itself is `move_ferry_reach_tiles`.
     let _ = dict.insert("scouting_range_max", i64::from(cohort.scoutingRangeMax()));

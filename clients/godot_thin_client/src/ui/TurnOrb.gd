@@ -87,6 +87,8 @@ const KIND_STARVING := "starving"
 const KIND_FOOD_FALLING := "food_falling"
 # A low-yield proposal of new ground (no idle hands: everyone works, for almost nothing).
 const KIND_LOW_YIELD := "low_yield"
+# The tribe leader's proposal (`.claude/rules/client/tribe-panel.md`): one row per tribe, answered with `tribe_proposal`.
+const KIND_TRIBE_PROPOSAL := HudTribeVocab.ORB_KIND
 const KIND_LOSING_POPULATION := "losing_population"
 const KIND_AWAITING_ORDERS := "awaiting_orders"
 # A penned herd its keeper cannot feed — it shrinks every turn (docs/plan_corral_managed_population.md).
@@ -137,6 +139,7 @@ const KIND_ICON := {
 	KIND_LOSING_POPULATION: "▼",
 	KIND_FOOD_FALLING: "▼",
 	KIND_LOW_YIELD: "🛠",
+	KIND_TRIBE_PROPOSAL: "★",
 	KIND_AWAITING_ORDERS: FoodIcons.STATUS_ICONS[FoodIcons.STATUS_AWAITING],
 	KIND_STARVING_PEN: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_CORRAL],
 	KIND_UNDER_KEPT_RUNG: FoodIcons.POLICY_ICONS[FoodIcons.POLICY_SOW],
@@ -1206,6 +1209,8 @@ func _on_proposal_pressed(action: String, proposal: Dictionary) -> void:
 		HudAttentionVocab.PROPOSAL_BAND_ID: int(proposal.get(HudAttentionVocab.PROPOSAL_BAND_ID, 0)),
 		HudAttentionVocab.PROPOSAL_FACTION: int(proposal.get(HudAttentionVocab.PROPOSAL_FACTION, 0)),
 		HudAttentionVocab.PROPOSAL_BUILD_KEY: String(proposal.get(HudAttentionVocab.PROPOSAL_BUILD_KEY, "")),
+		# A tribe leader's block says so, and `Main.format_chief_proposal` answers it as `tribe_proposal`.
+		HudTribeVocab.ORB_PROPOSAL_TRIBE_FLAG: bool(proposal.get(HudTribeVocab.ORB_PROPOSAL_TRIBE_FLAG, false)),
 	})
 
 func _reason_row(entry: Variant) -> Button:

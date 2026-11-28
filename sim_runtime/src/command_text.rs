@@ -258,6 +258,12 @@ pub const COMMAND_VERBS: &[CommandVerbHelp] = &[
         usage: "tribe_scout <faction_id> <band_id> <range>",
     },
     CommandVerbHelp {
+        verb: "tribe_proposal",
+        aliases: &[],
+        summary: "ANSWER THE TRIBE LEADER'S PROPOSAL, ordered through one of its member bands: `approve` adds the proposed works to the tribe's list (a monument or a storage pit is one work, a road is one road tile work per tile still below grade) at the default priority, exactly as `tribe_work` would; `defer` puts the proposal off for `labor_config.band_orders.proposal_not_now_turns` turns (\"Not now\"). The key is the one the frame's `tribeProposal` carries (`monument@x,y`, `storage:<rung>@x,y`, `road:<bandA>-<bandB>`); a key that is no longer the tribe's proposal is refused `no_such_proposal`.",
+        usage: "tribe_proposal <faction_id> <band_id> approve <key> | tribe_proposal <faction_id> <band_id> defer <key>",
+    },
+    CommandVerbHelp {
         verb: "band_order",
         aliases: &[],
         summary: "A BAND'S ORDER FOR ONE KIND: once a band has a leader, the leader keeps an ordered kind (stone today) on hand. `set` states how much to hold and how urgently - the sim picks the dig site, staffs the digging from the shortfall and stops when the store reaches the target; a target of 0 is refused (there is no 'none'). 'high', 'normal' or 'low' ranks the work against the band's other work. `release` is Crew it yourself: the player takes the kind, the leader's rows stay where they are with their crew as the Max, and the kind is crewed by hand exactly as a leaderless band crews it. `claim` is Hand it to the chief: the leader takes the kind back at its current target. `release` / `claim` may name ONE row (a patch's or a stand's `<x> <y>`, or a hunt row's `<herd_id>`): only that row changes hands and the kind stays the leader's. Refused for a band with no leader yet and for a kind that takes no order. The leader's rows are the ones he lists: `assign_labor extract`, `stop_labor` and `work_priority` on a row he lists are refused and name him, and on any other row (a stand the player crews) they work.",
@@ -1379,6 +1385,32 @@ pub fn parse_command_line(input: &str) -> Result<CommandPayload, CommandParseErr
                 action: TribeOrderAction::Scout {
                     range: parse_u32(range, "tribe_scout range")?,
                 },
+            })
+        }
+        // **THE TRIBE LEADER'S PROPOSAL** (#863) - `tribe_proposal <f> <b> approve|defer <key>`.
+        "tribe_proposal" => {
+            let faction_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("faction_id"))?;
+            let band_str = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("band_id"))?;
+            let answer = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("answer"))?;
+            let key = parts
+                .next()
+                .ok_or(CommandParseError::MissingArgument("key"))?
+                .to_owned();
+            let action = match answer.to_ascii_lowercase().as_str() {
+                "approve" => TribeOrderAction::ApproveProposal { key },
+                "defer" => TribeOrderAction::DeferProposal { key },
+                _ => return Err(CommandParseError::UnexpectedArgument(answer.to_owned())),
+            };
+            Ok(CommandPayload::TribeOrder {
+                faction_id: parse_u32(faction_str, "tribe_proposal faction")?,
+                band_id: parse_u64(band_str, "tribe_proposal band")?,
+                action,
             })
         }
         // **THE CHIEF'S BUILD PROPOSAL** - `approve_proposal <faction> <band>` and
@@ -3097,6 +3129,12 @@ pub fn render_command_line(payload: &CommandPayload) -> String {
             }
             TribeOrderAction::Scout { range } => {
                 format!("tribe_scout {faction_id} {band_id} {range}")
+            }
+            TribeOrderAction::ApproveProposal { key } => {
+                format!("tribe_proposal {faction_id} {band_id} approve {key}")
+            }
+            TribeOrderAction::DeferProposal { key } => {
+                format!("tribe_proposal {faction_id} {band_id} defer {key}")
             }
         },
         CommandPayload::ApproveProposal {
@@ -5987,6 +6025,18 @@ mod tests {
                 },
             ),
             ("tribe_scout 0 904 6", TribeOrderAction::Scout { range: 6 }),
+            (
+                "tribe_proposal 0 904 approve monument@44,28",
+                TribeOrderAction::ApproveProposal {
+                    key: "monument@44,28".into(),
+                },
+            ),
+            (
+                "tribe_proposal 0 904 defer road:3-7",
+                TribeOrderAction::DeferProposal {
+                    key: "road:3-7".into(),
+                },
+            ),
         ];
         for (line, action) in cases {
             let expected = CommandPayload::TribeOrder {

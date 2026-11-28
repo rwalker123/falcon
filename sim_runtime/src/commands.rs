@@ -40,6 +40,8 @@ pub const TRIBE_ACTION_WORK: &str = "work";
 pub const TRIBE_ACTION_STOP_WORK: &str = "stop_work";
 pub const TRIBE_ACTION_LEVY: &str = "levy";
 pub const TRIBE_ACTION_SCOUT: &str = "scout";
+pub const TRIBE_ACTION_APPROVE_PROPOSAL: &str = "approve_proposal";
+pub const TRIBE_ACTION_DEFER_PROPOSAL: &str = "defer_proposal";
 
 /// **What a tribe is ordered to do** (#862). Levels, priorities and rungs travel as the player's
 /// words: which exist is the sim's to say, and it refuses an unknown one by name.
@@ -60,6 +62,10 @@ pub enum TribeOrderAction {
     Levy { level: String },
     /// Set the tribe's scouting range (tiles past the local range).
     Scout { range: u32 },
+    /// Approve the tribe leader's proposal named by `key` (#863).
+    ApproveProposal { key: String },
+    /// Put the tribe leader's proposal named by `key` off ("Not now", #863).
+    DeferProposal { key: String },
 }
 
 /// Supported command payloads.
@@ -2405,6 +2411,14 @@ impl CommandEnvelope {
                         cmd.action = TRIBE_ACTION_SCOUT.to_string();
                         cmd.range = *range;
                     }
+                    TribeOrderAction::ApproveProposal { key } => {
+                        cmd.action = TRIBE_ACTION_APPROVE_PROPOSAL.to_string();
+                        cmd.key = key.clone();
+                    }
+                    TribeOrderAction::DeferProposal { key } => {
+                        cmd.action = TRIBE_ACTION_DEFER_PROPOSAL.to_string();
+                        cmd.key = key.clone();
+                    }
                 }
                 pb::command_envelope::Command::TribeOrder(cmd)
             }
@@ -3294,6 +3308,10 @@ impl CommandEnvelope {
                     },
                     TRIBE_ACTION_LEVY => TribeOrderAction::Levy { level: cmd.level },
                     TRIBE_ACTION_SCOUT => TribeOrderAction::Scout { range: cmd.range },
+                    TRIBE_ACTION_APPROVE_PROPOSAL => {
+                        TribeOrderAction::ApproveProposal { key: cmd.key }
+                    }
+                    TRIBE_ACTION_DEFER_PROPOSAL => TribeOrderAction::DeferProposal { key: cmd.key },
                     _ => {
                         return Err(CommandDecodeError::InvalidEnum {
                             field: "TribeOrderCommand.action",

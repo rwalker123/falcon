@@ -2359,9 +2359,10 @@ the page does draw. **Sabotage-verified**: not dropping the outgoing Work nodes 
 fails the Work list and the roster.
 
 **Tribe scout card** (`_assert_tribe_scout_card` in `band_panel_preview.gd`, frame
-`band_panel_scout_tribe`): a band in a tribe reads the tribe's range on the stepper, says `Tribe range`
-on the card and names the tribe in the value's hover; its stepper sends `tribe_scout`, its kit picker
-still sends `assign_labor ... scout` at the tribe's range.
+`band_panel_scout_tribe`): a band in a tribe reads the tribe's range as a read-only `+N tiles · set by the
+tribe` (no stepper), says `Tribe range` on the card and names the tribe in the value's hover; its kit picker
+still sends `assign_labor ... scout` at the tribe's range. The `tribe_scout` stepper is the tribe page's
+(`tribe-panel.md`, asserted in `chapters/tribe_panel.gd`).
 
 ## `band_panel_family_limit.gd` - the breeding ceiling's frames (issue #691)
 

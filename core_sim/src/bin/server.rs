@@ -7725,7 +7725,18 @@ fn handle_tribe_order(
             core_sim::tribe_levy::tribe_scout(&mut app.world, faction, band, range)
                 .map(|(echo, _)| echo)
         }
+        TribeOrderAction::ApproveProposal { key } => {
+            core_sim::tribe_proposals::approve_tribe_proposal(&mut app.world, faction, band, &key)
+        }
+        TribeOrderAction::DeferProposal { key } => {
+            core_sim::tribe_proposals::defer_tribe_proposal(&mut app.world, faction, band, &key)
+        }
     };
+    // The works or the ceiling may have moved: the leader's offer is re-derived (a proposal answer
+    // already did).
+    if result.is_ok() {
+        core_sim::tribe_proposals::refresh_tribe_proposals(&mut app.world);
+    }
     match result {
         Ok(label) => push_band_event(
             app,

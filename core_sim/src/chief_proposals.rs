@@ -128,12 +128,12 @@ struct Candidate {
 }
 
 /// What a band is, read once.
-struct BandView {
-    entity: Entity,
-    id: BandId,
-    faction: FactionId,
+pub(crate) struct BandView {
+    pub(crate) entity: Entity,
+    pub(crate) id: BandId,
+    pub(crate) faction: FactionId,
     /// The forage tiles this band holds a crew row on.
-    forage_rows: Vec<UVec2>,
+    pub(crate) forage_rows: Vec<UVec2>,
 }
 
 /// The `trigger` a proposal rides: idle hands.
@@ -209,13 +209,14 @@ fn build_key(rung: &RungDef, tile: Option<UVec2>) -> String {
 
 /// Every build `band` could declare right now, with its food figure and keep raises. The eligibility
 /// is the gates' ([`crate::build_gates`]), never a second check here.
-fn candidates(world: &World, view: &BandView, bands: &[BandView]) -> Vec<Candidate> {
-    let Some(cohort) = world.get::<PopulationCohort>(view.entity) else {
-        return Vec::new();
-    };
-    let Some(allocation) = world.get::<LaborAllocation>(view.entity) else {
-        return Vec::new();
-    };
+/// **THE BAND'S SPOILAGE READING** - the forecast the chief's storage candidates and a tribe
+/// leader's storage-pit proposals both read (`storageSaves`): one function, so they cannot disagree.
+pub(crate) fn band_spoilage_for(
+    world: &World,
+    view: &BandView,
+) -> Option<crate::band_spoilage::BandSpoilage> {
+    let cohort = world.get::<PopulationCohort>(view.entity)?;
+    let allocation = world.get::<LaborAllocation>(view.entity)?;
     let ladder = world.resource::<LadderConfigHandle>().get();
     let labor = world.resource::<LaborConfigHandle>().get();
     let demographics = world.resource::<DemographicsConfigHandle>().get();
@@ -253,7 +254,7 @@ fn candidates(world: &World, view: &BandView, bands: &[BandView]) -> Vec<Candida
     };
     let held = scene.held_by(Some(view.id));
     let stores = crate::fixed_store::reachable_stores(&scene, Some(view.id), cohort.faction, at);
-    let spoilage = band_spoilage_of(&BandSpoilInputs {
+    Some(band_spoilage_of(&BandSpoilInputs {
         cohort,
         allocation,
         band: Some(view.id),
@@ -280,7 +281,27 @@ fn candidates(world: &World, view: &BandView, bands: &[BandView]) -> Vec<Candida
                 ladder.knowledge.completion_threshold,
             )
         },
-    });
+    }))
+}
+
+fn candidates(world: &World, view: &BandView, bands: &[BandView]) -> Vec<Candidate> {
+    let Some(cohort) = world.get::<PopulationCohort>(view.entity) else {
+        return Vec::new();
+    };
+    let Some(allocation) = world.get::<LaborAllocation>(view.entity) else {
+        return Vec::new();
+    };
+    let ladder = world.resource::<LadderConfigHandle>().get();
+    let labor = world.resource::<LaborConfigHandle>().get();
+    let flora = world.resource::<FloraConfigHandle>().get();
+    let sim_config = world.resource::<SimulationConfig>();
+    let tile_registry = world.resource::<TileRegistry>();
+    let forage = world.resource::<ForageRegistry>();
+    let improvements = world.resource::<TileImprovementRegistry>();
+    let at = band_tile(world, cohort);
+    let Some(spoilage) = band_spoilage_for(world, view) else {
+        return Vec::new();
+    };
     let threshold = labor.band_orders.storage_build_min_saved;
     let mut found = Vec::new();
     crate::build_gates::with_scene(world, |gates| {
@@ -653,7 +674,7 @@ const UNBOOSTED_OUTPUT: f32 = 1.0;
 const NO_FOOD: f32 = 0.0;
 
 /// "dig a storage pit": the rung's configured phrase, else its verb and its article'd name.
-fn proposal_phrase(rung: &RungDef) -> String {
+pub(crate) fn proposal_phrase(rung: &RungDef) -> String {
     rung.proposal_phrase.clone().unwrap_or_else(|| {
         format!(
             "{} {}",

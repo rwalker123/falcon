@@ -142,6 +142,10 @@ signal upkeep_mode_requested(payload: Dictionary)
 ## A tribe member's scout range stepper (#862): `{ faction, band_id, range }`; Main formats
 ## `tribe_scout <faction> <band_id> <range>`. RELAYED from `BandPanelController`, its only emitter.
 signal tribe_scout_requested(payload: Dictionary)
+## A tribe-addressed command (`.claude/rules/client/tribe-panel.md`): `{action: work|stop|levy, faction, band_id,
+## ...}`; Main formats `tribe_work` / `tribe_levy`. RELAYED from the tribe's page, the road card, the tile crew
+## sheet and the rung card, none of which writes an optimistic overlay (a tribe's work has no row to shadow).
+signal tribe_command_requested(payload: Dictionary)
 ## Emitted when the player sets, releases or claims a band order (#860). Payload `{ faction, band_id,
 ## kind, action, target, priority, x, y, herd_id }`; Main formats `band_order <faction> <band_id> <kind> ...`.
 ## RELAYED from `BandOrdersController`, the only emitter.
@@ -774,6 +778,10 @@ func _ready() -> void:
         func(payload: Dictionary) -> void: upkeep_mode_requested.emit(payload))
     _bandpanel.tribe_scout_requested.connect(
         func(payload: Dictionary) -> void: tribe_scout_requested.emit(payload))
+    _bandpanel.tribe_command_requested.connect(
+        func(payload: Dictionary) -> void: tribe_command_requested.emit(payload))
+    _drawercompose.tribe_command_requested.connect(
+        func(payload: Dictionary) -> void: tribe_command_requested.emit(payload))
     _bandpanel.open_borders_requested.connect(
         func(payload: Dictionary) -> void: open_borders_requested.emit(payload))
     _bandpanel.diplomacy_command_requested.connect(

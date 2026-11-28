@@ -715,6 +715,15 @@ fn seed_snapshot() -> WorldSnapshot {
             ..Default::default()
         });
         cohort.tribe_member_names = vec![String::new(); ROWS];
+        // The tribe on screen (#863): the id, the member ids parallel to the names, a proposal.
+        cohort.tribe_id = 3;
+        cohort.tribe_member_bands = vec![0u64; ROWS];
+        cohort.tribe_proposal = TribeProposalState {
+            tile_x: 5,
+            tile_y: 6,
+            for_band: 7,
+            ..TribeProposalState::default()
+        };
         // The tribe's levy (#862): a ceiling, a range and a work whose carrying bands are a seeded
         // nested array.
         cohort.tribe_levy_ceiling = TRIBE_LEVY_HIGH;

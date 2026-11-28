@@ -1048,6 +1048,8 @@ const SCROLL_CARRY_STATE_ARMED := &"armed"
 const SCROLL_CARRY_STATE_APPLY := &"apply"
 const SCROLL_CARRY_NO_SUBJECT := -3
 const SCROLL_CARRY_FACTION_SUBJECT := -2
+## A tribe's page: one subject key for every tribe, like the faction page's.
+const SCROLL_CARRY_TRIBE_SUBJECT := -3
 
 ## Sized so a TYPICAL label — `Forage (nn, nn)`, `Hunt Woolly Mammoth` — fits whole beside the row's
 ## fixed furniture. At 300 a 1920 bottom dock took 4 columns and cut the labels mid-coordinate

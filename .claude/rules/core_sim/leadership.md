@@ -348,6 +348,7 @@ echoed on the band's feed (`push_band_event`):
 | `tribe_work <f> <b> stop <branch> <x> <y>` | remove the work and drop its levy rows; a road work's declared build goes with it, the road and its keeper stay | `no_such_work` |
 | `tribe_levy <f> <b> none\|low\|normal\|high` | set the ceiling | `unknown_levy` |
 | `tribe_scout <f> <b> <N>` | set the tribe's one range, clamped to `labor_config.scout.range_past_local_max` exactly as `assign_labor ... scout` clamps | - |
+| `tribe_proposal <f> <b> approve\|defer <key>` | answer the tribe leader's proposal ("The tribe leader proposes tribe works" below): `approve` adds its works through `tribe_work` at the default priority, `defer` hides the key for `labor_config.band_orders.proposal_not_now_turns` | `no_such_proposal` (the key is not the tribe's current offer, or no longer a candidate) |
 
 `assign_labor <f> <b> scout <N>` on a member is refused `scouting_set_by_tribe` when `N` (clamped) is not the band's current range; naming the current range with a `kit` is accepted and applies the kit alone, because the tribe owns the range and the kit is the band's (a band in no tribe is unchanged). Wire: one proto message `TribeOrderCommand` (field 100, `action` = `work | stop_work | levy |
 scout`), one `CommandPayload::TribeOrder { faction_id, band_id, action: TribeOrderAction }`; the text verbs
@@ -425,12 +426,62 @@ messengers' checks; the supply bins are sized by it too.
 levy row for it, nearest first), workers (heads on those rows, restated in the Snapshot stage by `tribe_levy::refresh_all_levy_workers` after the last restaff that can touch a levy row, so the frame's `tribeWorks[].workers` equals its levy rows' workers) }]`, published to every own member band of a
 formed tribe (the `tribeName` rule); a foreign row and a non-member carry the defaults.
 
+**The tribe on screen** (#863, appended after `tribeSettlementStage`, published by the same rule as `tribeName`):
+`tribeId` (the `TribeId`, `0` = in no tribe, so a client keys a tribe stably), `tribeMemberBands` (`[ulong]`:
+the member `BandId`s in exactly the order of `tribeMemberNames`, parallel to it) and `tribeProposal` (below).
+
 Pinned by `tests/tribe_levy.rs` (the nearest-member row on the encoded frame, overflow and its removal,
 adoption, stop, every refusal, the range lifecycle, the acting reading and its effect on the pair's rate, the
 checkpoint), `staffing::tests` (the levy step, the ceiling ladder, the leaderless budget, scouts after pass 1,
 the stretch, the trim order), `tribe_levy::tests` (the stretch geometry), `route_traffic::a_tribe_pair_pools_out_to_the_tribe_reach_and_no_further`,
 `supply_network_config::tests`, `command_text` (the round trips) and `sim_ai`'s
 `a_tribe_member_does_not_ask_to_scout`.
+
+### The tribe leader proposes tribe works
+
+Code: `core_sim/src/tribe_proposals.rs`, `tests/tribe_proposals.rs`. The paramount chief never adds a work
+himself: the player answers one offer a tribe at a time, as the band chief's build proposal is answered
+(`work-party.md` -> "A chief proposes a build; the player approves it"). The engine names no rung: each is read
+off the ladder or a config list.
+
+**One candidate list, ranked monument, storage pits, roads** (within a kind: pits by member order, roads by
+pair), and **the first whose key is not deferred is the offer**:
+
+| Kind | What | Gate |
+|---|---|---|
+| `monument` | the rungs `belief_config.json -> improvement_belief` lists, at the leader band's `belief_anchor` (the members' shared gathering place; nothing if it has none) | `build_gates::validate_tile_verb`, the gate `tribe_work` runs (the `ritual` lesson, `min_belief`, the rung beneath, another people's improvement); skipped when the tile already holds the rung or the tribe already has a work on that tile and branch |
+| `storage` | for each member that owns **no** food store (an improvement holding a `keeping.fixed_stores` rung), the tile-kind row of the band's own `storageSaves` (`chief_proposals::band_spoilage_for`, the one reading the band chief's proposal uses) with the lesson known, nothing declared and `foodSaved >= labor_config.band_orders.storage_build_min_saved`, on that band's camp tile | `validate_tile_verb` on the camp tile; skipped when the tribe already has a work there. The work is carried by the nearest member, which is the band it is for, and the declared build places the pit owned by its carrier |
+| `road` | a minimum spanning tree over the members' camps (wrap-aware hex distance, Kruskal, ties by lower `BandId` pair); each edge without `routes::standing_link` is one road: a `routes::first_built_rung` work for each `routes::trace_path` tile standing below that rung and not already a tribe work | `tribe_levy::road_work_gate` (`build_gates::validate_road_verb`, asked of each tile's carrier) must accept **every** tile or the candidate is dropped. Only member camps are considered |
+
+**When**: `tribe_proposals::advance_tribe_proposals` runs `.after(advance_tribe_levy)` so it reads the fresh levy, and
+every `tribe_*` command that succeeds re-runs it. No offer while the levy ceiling is `none`, and none while any tribe
+work with a declared build **that can progress** (`staffing::band_build_can_progress`, the test the overflow chain's
+shortfall uses) holds fewer builders than its `BuildCrew::cap`, summed across the work's carriers: a gated or
+materials-stalled build never holds the offer back. There is no idle-hands or falling-food trigger.
+
+**Keys** are stable across turns: `monument@x,y`, `storage:<branch:rung>@x,y`, `road:<bandA>-<bandB>` (lower id first).
+**Text** is composed in the sim ("Zeke proposes: raise a monument at (44, 28)", "... dig a storage pit for Greyfen at
+(x, y)", "... build a road from Pinewold to Greyfen"; a council reads "<Band>'s elders propose"), the rung's
+`proposal_phrase` where one exists.
+
+**State**: `TribeProposalBook` (`SimState::tribe_proposals`, `SAVE_FORMAT_VERSION` 76): per `TribeId` the `deferred` map
+(key -> the tick it returns at) and `current`; entries of tribes that no longer exist are pruned each pass.
+
+**Commands**: `approve` re-derives the candidates, requires the key to be the tribe's current offer **and** still a
+candidate (else `no_such_proposal`), then calls `tribe_work` once per work at the default priority (a road: one per
+tile) and re-runs the pass; `defer` stores `tick + proposal_not_now_turns`. Both echo and refuse as `handle_tribe_order`
+does for the other tribe verbs; wire: `TribeOrderCommand.action` `approve_proposal` | `defer_proposal` with `key`
+(proto field 11).
+
+**Wire**: `PopulationCohortState.tribeProposal` (`TribeProposalState { key, kind (monument|storage|road), text, tileX,
+tileY (the monument or pit tile, or the first road tile), forBand (the pit's band, else 0) }`), the same row on **every**
+own member band of the tribe; an empty `key` is no proposal. Native keys: `tribe_proposal`, `tribe_id`,
+`tribe_member_bands`, `tribe_levy_ceiling`, `tribe_works`.
+
+Pinned by `tests/tribe_proposals.rs` (the monument's lesson and belief gates, the `none` ceiling, a pit for the rotting
+band without one and not for the one that owns a pit, a short crew holding the offer back and a stalled build not,
+the road's one-work-per-tile approval, defer and its return, a stale approve refused by token, the book across a
+checkpoint, and the encoded frame's rows) and `command_text`'s round trips.
 
 ## Scenario section
 

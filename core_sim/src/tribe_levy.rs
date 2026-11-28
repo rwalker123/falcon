@@ -110,21 +110,21 @@ pub fn scouting_stretches(
 }
 
 /// A member band as the pass reads it.
-struct Member {
-    band: BandId,
-    entity: Entity,
-    camp: UVec2,
+pub(crate) struct Member {
+    pub(crate) band: BandId,
+    pub(crate) entity: Entity,
+    pub(crate) camp: UVec2,
 }
 
 /// The world's grid and wrap, the supply reach and the ladder the pass reads.
-struct PassScene {
-    grid: (u32, u32),
-    wrap: bool,
-    reach: u32,
-    ladder: std::sync::Arc<crate::intensification::LadderConfig>,
+pub(crate) struct PassScene {
+    pub(crate) grid: (u32, u32),
+    pub(crate) wrap: bool,
+    pub(crate) reach: u32,
+    pub(crate) ladder: std::sync::Arc<crate::intensification::LadderConfig>,
 }
 
-fn pass_scene(world: &World) -> Option<PassScene> {
+pub(crate) fn pass_scene(world: &World) -> Option<PassScene> {
     let tiles = world.get_resource::<crate::resources::TileRegistry>()?;
     Some(PassScene {
         grid: (tiles.width, tiles.height),
@@ -140,7 +140,7 @@ fn pass_scene(world: &World) -> Option<PassScene> {
     })
 }
 
-fn resident_members(world: &mut World, tribe: &BTreeSet<BandId>) -> Vec<Member> {
+pub(crate) fn resident_members(world: &mut World, tribe: &BTreeSet<BandId>) -> Vec<Member> {
     let mut found: Vec<(BandId, Entity)> = world
         .query_filtered::<(Entity, &BandId), With<ResidentBand>>()
         .iter(world)
@@ -704,7 +704,10 @@ pub struct TribeRefusal {
     pub message: String,
 }
 
-fn refuse<T>(token: &'static str, message: impl Into<String>) -> Result<T, TribeRefusal> {
+pub(crate) fn refuse<T>(
+    token: &'static str,
+    message: impl Into<String>,
+) -> Result<T, TribeRefusal> {
     Err(TribeRefusal {
         token,
         message: message.into(),
@@ -712,7 +715,7 @@ fn refuse<T>(token: &'static str, message: impl Into<String>) -> Result<T, Tribe
 }
 
 /// The tribe the band names, for the band's own faction.
-fn tribe_of_band(
+pub(crate) fn tribe_of_band(
     world: &mut World,
     faction: FactionId,
     band: BandId,
@@ -879,7 +882,7 @@ pub fn tribe_work(
 
 /// The gate a road work's carrier would meet if it declared the build itself: the band's own
 /// `grade` / `pave` gate, asked of the band the tribe would hand the tile to.
-fn road_work_gate(
+pub(crate) fn road_work_gate(
     world: &mut World,
     id: TribeId,
     faction: FactionId,

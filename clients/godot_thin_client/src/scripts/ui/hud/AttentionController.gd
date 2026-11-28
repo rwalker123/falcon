@@ -458,6 +458,49 @@ func _proposal_block_of(entry: Dictionary) -> Dictionary:
         HudAttentionVocab.PROPOSAL_FACTION: int(entry.get("faction", HudConst.PLAYER_FACTION_ID)),
     }
 
+## **ONE ORB ROW PER TRIBE WHOSE LEADER HAS A PROPOSAL OUT** (`.claude/rules/client/tribe-panel.md`). The sim
+## publishes `tribe_proposal` on every member, so the row is read off the tribe's FIRST member and keyed by
+## `tribe_id` - three members never make three rows. Styled like the band chief's proposal row (the sim's
+## sentence as published, `Approve` / `Not now` beneath it) but its block carries the tribe flag, so the
+## answer leaves as `tribe_proposal ...` and never as `approve_proposal`. Locating: the proposal names a tile.
+func tribe_proposal_attention(player_bands: Array) -> Array:
+    var rows: Array = []
+    var seen: Dictionary = {}
+    for band_variant in player_bands:
+        if not (band_variant is Dictionary) or not TribeRoster.is_member(band_variant):
+            continue
+        var tribe_id := TribeRoster.tribe_id_of(band_variant)
+        if seen.has(tribe_id):
+            continue
+        seen[tribe_id] = true
+        var members := TribeRoster.members(player_bands, tribe_id)
+        var first := TribeRoster.address_band(members)
+        var proposal: Variant = first.get(HudTribeVocab.KEY_PROPOSAL, {})
+        if not (proposal is Dictionary) or String((proposal as Dictionary).get(HudTribeVocab.PROPOSAL_KEY, "")) == "":
+            continue
+        var tribe_name := String(first.get(HudTribeVocab.KEY_TRIBE_NAME, ""))
+        var tile_x := int((proposal as Dictionary).get(HudTribeVocab.PROPOSAL_TILE_X, -1))
+        var tile_y := int((proposal as Dictionary).get(HudTribeVocab.PROPOSAL_TILE_Y, -1))
+        rows.append({
+            "kind": HudTribeVocab.ORB_KIND,
+            "owner": int(first.get("entity", -1)),
+            "severity": HudAttentionVocab.ATTENTION_SEVERITY_WARN,
+            "label": tribe_name,
+            "detail": HudTribeVocab.ORB_DETAIL,
+            "x": tile_x, "y": tile_y,
+            HudAttentionVocab.ATTENTION_PROPOSAL: {
+                HudAttentionVocab.PROPOSAL_TEXT_KEY: HudTribeVocab.ORB_LABEL_FORMAT % [tribe_name,
+                    String((proposal as Dictionary).get(HudTribeVocab.PROPOSAL_TEXT, ""))],
+                HudAttentionVocab.PROPOSAL_BUILD_KEY: String((proposal as Dictionary).get(HudTribeVocab.PROPOSAL_KEY, "")),
+                HudAttentionVocab.PROPOSAL_ESCALATION_KEY: 0,
+                HudAttentionVocab.PROPOSAL_TRIGGER_KEY: "",
+                HudAttentionVocab.PROPOSAL_BAND_ID: int(first.get("band_id", HudConst.NO_BAND_ID)),
+                HudAttentionVocab.PROPOSAL_FACTION: int(first.get("faction", HudConst.PLAYER_FACTION_ID)),
+                HudTribeVocab.ORB_PROPOSAL_TRIBE_FLAG: true,
+            },
+        })
+    return rows
+
 ## The row a FALLING-FOOD proposal rides, `{}` unless the band's published proposal was raised by falling
 ## food. The server prefers the idle wording when hands are idle, and the idle row (which then carries
 ## the proposal) wins here too, so one proposal is never offered on two rows.
@@ -612,6 +655,8 @@ func build_band_attention(player_bands: Array, player_expeditions: Array) -> Arr
     # Producer 10 — a herd our bands hunt is stressed / collapsing. After the band loop because one
     # herd is hunted by several bands and gets ONE row.
     attention.append_array(_herd_thinning_attention(player_bands))
+    # The tribe leader's proposal rows - after the band loop, since a tribe is read once whatever its size.
+    attention.append_array(tribe_proposal_attention(player_bands))
     return attention
 
 ## **THE EVENT HALF OF THE ORB REGISTRY** — the crew hand-off rows, the gathering rows, then the leader-emerged rows,
