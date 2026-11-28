@@ -237,7 +237,16 @@ pub fn advance_settlements(
         let Some(&now) = next.tribes.get(&tribe.id) else {
             continue;
         };
-        let previous = stages.tribes.get(&tribe.id).copied().unwrap_or(0);
+        // A tribe with no stored stage (formed this turn) inherits the highest stage its members
+        // already stood at, so a stage a band had announced is not announced again for the tribe.
+        let previous = stages.tribes.get(&tribe.id).copied().unwrap_or_else(|| {
+            tribe
+                .members
+                .iter()
+                .filter_map(|band| stages.bands.get(band).copied())
+                .max()
+                .unwrap_or(0)
+        });
         if let Some(def) = rose(previous, now) {
             if let Some(entry) = tribe_entry(tick.0, tribe, def, &readings) {
                 event_log.push(entry);

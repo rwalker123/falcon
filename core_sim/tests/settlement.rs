@@ -469,3 +469,56 @@ fn the_stages_ride_the_checkpoint() {
     settle(&mut app);
     assert_eq!(reached(&app).len(), announced);
 }
+
+/// A chiefed, tie-joined pair of bands (ids 1 and 2) closed into one tribe over the bank's fill.
+fn form_a_tribe(app: &mut App, one: Entity) {
+    crown(app, one, "Chief1");
+    tie_all(app, &[1, 2]);
+    for _ in 0..TURNS_TO_CLOSE_A_KIN_PAIR {
+        turn(app);
+    }
+    assert_eq!(app.world.resource::<TribeRegistry>().len(), 1);
+}
+
+#[test]
+fn a_new_tribe_at_its_members_stage_does_not_announce_it_again() {
+    let (mut app, one) = city_grade_band(CITY_PEOPLE, A_FULL_GRANARY, A_GREAT_URN);
+    band(&mut app, 2, 30, 1);
+    settle(&mut app);
+    assert_eq!(band_stage(&app, 1), "city");
+    assert_eq!(reached(&app).len(), 1, "the lone band announced its city");
+
+    form_a_tribe(&mut app, one);
+    assert_eq!(
+        tribe_stage(&app),
+        "city",
+        "the tribe stands where its member did"
+    );
+    assert_eq!(
+        reached(&app).len(),
+        1,
+        "a city already announced is not announced again for the tribe: {:?}",
+        reached(&app)
+    );
+}
+
+#[test]
+fn a_new_tribe_above_its_members_stage_announces_the_climb() {
+    let mut app = spawn_world();
+    let one = band(&mut app, 1, CITY_PEOPLE / 2, 1);
+    band(&mut app, 2, CITY_PEOPLE / 2, 1);
+    let faction = faction_of(&app, one);
+    keep_store(&mut app, id(1), faction, "granary", A_FULL_GRANARY);
+    app.world
+        .resource_mut::<BeliefRegistry>()
+        .add(PLACE, A_GREAT_URN);
+    settle(&mut app);
+    assert_eq!(band_stage(&app, 1), "town");
+    assert!(reached(&app).is_empty(), "neither band is a city");
+
+    form_a_tribe(&mut app, one);
+    assert_eq!(tribe_stage(&app), "city", "together they are a city");
+    let events = reached(&app);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert!(events[0].detail.as_deref().unwrap().contains("tribe="));
+}

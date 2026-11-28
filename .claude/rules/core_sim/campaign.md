@@ -1689,7 +1689,7 @@ stages.
 a `CommandEventKind::SettlementStageReached` (`settlement_stage_reached`): label "The Reedwater tribe
 becomes a city" / "Band 4 becomes a city", detail `stage=<id> tribe=<id>` or `stage=<id> band=<id>`,
 filed against the tribe leader's band (else a resident member) or the lone band. Edge-gated on the
-stored stage, so it fires once per rising crossing. (#865 makes the tribe a city's ruler off this
+stored stage, so it fires once per rising crossing. A tribe with no stored stage (formed this turn) takes as its previous stage the highest stored stage among its member bands, so a stage a band already announced is not announced again for the tribe, and a tribe that resolves above its members' highest does announce. (#865 makes the tribe a city's ruler off this
 turn; the Telling's `settlement.city_reached` beat tells the climb in the narrator's voice.)
 
 **The granary is the store branch's third rung** (`food_stores:granary`, order 3, requires
