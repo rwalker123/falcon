@@ -130,6 +130,13 @@ fn tile_to_dict(tile: fb::TileState<'_>) -> VarDictionary {
     // BELIEF — the dead-equivalents held by this place (1.0 per person who died here; never decays).
     // A plain float on the wire. 0 = no belief here; the tile card's Ancestors row shows only above 0.
     let _ = dict.insert("belief", tile.belief() as f64);
+    // The same belief split by where it came from (dead + gatherings + monument == `belief`), and the
+    // sacred-ground strength in [0,1) the sim derives from it -- already 0 below the sim's adoption line,
+    // so the client reads it as both its "is this sacred ground" gate and the bar's value.
+    let _ = dict.insert("belief_from_deaths", tile.beliefFromDeaths() as f64);
+    let _ = dict.insert("belief_from_gatherings", tile.beliefFromGatherings() as f64);
+    let _ = dict.insert("belief_from_monument", tile.beliefFromMonument() as f64);
+    let _ = dict.insert("belief_weight", tile.beliefWeight() as f64);
     let _ = dict.insert("mountain_kind", i64::from(tile.mountainKind().0));
     let _ = dict.insert("mountain_relief", tile.mountainRelief());
     // The GRAZE (pasture) layer — the ANIMAL-edible vegetal stock, on nearly every land tile

@@ -724,17 +724,31 @@ which is a property of the tier and not of the merge.
   mid-latitudes read "Hospitable", the equator "Hospitable/Fair", and poles/high-alt/caverns
   "Harsh/Hostile" — the config buckets (`0.02`/`0.05`/`0.09`) spread cleanly across that range,
   so no re-tune was needed.
-- **Tile-card Sacred ground** (#870): `SubjectDrawerController._append_tile_branch_rows` adds
-  `Sacred ground: ▰▰▰▱▱ hallowed` (`DetailFormat.sacred_ground_line`) ONLY where the tile is the
-  sacred ground of one or more of the player's own non-expedition bands (`has_belief_anchor` true and
-  `belief_anchor_x/y` equal to the tile, off `_band_labor.current_player_bands()`). The bar and word
-  are the Beliefs pull-down's: `DetailFormat.sacred_ground_bar` is the ONE implementation, driven by
-  the strongest `belief_anchor_weight` among the holding bands (`BandDetailLines` calls it). The row's
-  hover names who honours it (`Honoured by <band>` / `<band> and N other bands`,
-  `DetailFormat.sacred_ground_hover`). A tile no band of the player's holds has no row, whatever
-  `TileState.belief` it carries; the raw dead count is never shown. The row is also the belief
-  branch's door/readout host (`HudTileVocab.readout_row_key` → `DetailFormat.SACRED_GROUND_ROW`), so
-  a belief-branch door exists only on a tile that is an own band's sacred ground.
+- **Tile-card Sacred ground** (#870, widened by #703): `SubjectDrawerController._append_tile_branch_rows`
+  adds `Sacred ground: ▰▰▰▱▱ hallowed` (`DetailFormat.sacred_ground_line`) on ANY tile whose
+  `belief_weight` (`TileState.beliefWeight`, native `belief_weight`, cached in `MapView.tile_belief_weight`)
+  is above 0. The sim zeroes the weight below its adoption line, so the client states neither the formula
+  nor the line: the weight is both the gate and the bar's value (equal to the holder's
+  `belief_anchor_weight` on a held tile). The bar and word are the Beliefs pull-down's:
+  `DetailFormat.sacred_ground_bar` is the ONE implementation. The row's hover names who honours it
+  (`Honoured by <band>` / `<band> and N other bands`, off the player's non-expedition bands whose
+  `belief_anchor_x/y` equal the tile) or, on a tile none of them holds (a rival's, an abandoned place),
+  `None of your bands honours it.` (`DetailFormat.sacred_ground_hover`). A tile with belief but weight 0
+  has no row; the raw dead count is never shown. The row is also the belief branch's door/readout host
+  (`HudTileVocab.readout_row_key` → `DetailFormat.SACRED_GROUND_ROW`).
+  **The sources row** beneath it (`From:`, `DetailFormat.sacred_sources_row`) is a 12-pip split bar of the
+  three stocks (`belief_from_deaths` / `_gatherings` / `_monument`, cached in `MapView.tile_belief_sources`
+  as a `Vector3`), apportioned by largest remainder with every stocked source keeping a pip, each source
+  a shade of `HudStyle.BELIEF` (dead darker, monument lighter). Its hover is the sentence
+  `From the dead 12 · from gatherings 3 · from the monument 2` (whole numbers, zero sources omitted). The
+  value's per-source colours ride `DetailFormat.Context.value_runs` (`{line index: bbcode}`), since a
+  `Key: value` line carries one ink.
+- **People head cohesion clause** (#703): `HudWidgets.zone_head` takes an optional second run
+  (`clause`, `clause_color`, `clause_tooltip`) drawn as a third label after the readout;
+  `BandPanelController._build_people_block` passes `· holds N` from `cohesion_ceiling` (only when > 0; a
+  party or foreign band publishes none), `HudStyle.WARN` when `cohesion_headcount` exceeds it, else
+  `INK_DIM`. Tooltip: `HudWorkVocab.PEOPLE_HOLDS_TOOLTIP_FORMAT`. It follows the away clause, since the
+  readout label is one ink; harnesses read the readout as the head's SECOND label.
 - **Tile-card Climate** (snapshot `TileState.temperature`, decoded in `native/src/lib.rs`
   `tile_to_dict` as `temperature` (°); temperature is now a **latitude + elevation** climate
   (equator-in-the-middle, poles cold) with a small element jitter, NOT the old element

@@ -605,6 +605,9 @@ const BAND_ZONE_TIER_TALL := 2
 ## segments partition — drawing them as a slice made the segments sum past their own denominator.
 ## The fact still has to be reachable, so it reads here.
 const PEOPLE_AWAY_FORMAT := " · %d away"
+## The People head's cohesion clause: how many a band can hold together as one, amber when it holds more.
+const PEOPLE_HOLDS_FORMAT := "· holds %d"
+const PEOPLE_HOLDS_TOOLTIP_FORMAT := "About %d can hold together as one band. Sacred ground underfoot lets more stay. Past that, people drift off to another band."
 
 ## **HANDS WALKING HOME FROM A STOOD-DOWN FAR PARTY** (#706). A far posting that ends hands nothing
 ## over at once: every porter finishes its walk and the hands at the source carry the load home. They

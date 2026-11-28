@@ -498,6 +498,16 @@ table TileState {
   // (not per faction) in dead-equivalents: deaths while a band stands on this tile add to it, and
   // nothing ever decays it — an abandoned place keeps its dead. 0 = no belief here.
   belief:float = 0;
+  // WHERE `belief` CAME FROM — the three monotone stocks it is the sum of, in dead-equivalents:
+  // people who died here, gatherings held here, and a held monument's per-turn credit.
+  beliefFromDeaths:float = 0;
+  beliefFromGatherings:float = 0;
+  beliefFromMonument:float = 0;
+  // IS THIS SACRED GROUND — `culture.anchor_weight(belief)` (the saturating b / (b + half-saturation)
+  // the band's beliefAnchorWeight uses) when belief >= `culture.min_anchor_belief`, else 0. 0 means a
+  // band would not adopt this place as its ancestors' anchor; the client reads this as the gate and
+  // as the strength-bar value, and never restates the formula or the adoption line.
+  beliefWeight:float = 0;
 }
 
 // A band's resolved settlement-progression stage — how rooted-in-place its dwelling has become.

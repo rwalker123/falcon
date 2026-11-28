@@ -2893,14 +2893,22 @@ pub fn capture_snapshot(
     {
         // Sweep 1 of 2 — the ONLY walk of the full tile query.
         let _s = crate::turn_profile::scope("snapshot.build.tiles");
+        let wellbeing_for_tiles = wellbeing.get();
         for (entity, tile, food_module) in tiles.iter() {
+            // **Sacred ground** — the band's own adoption line and saturating weight, derived here
+            // from live config so the client restates neither.
+            let tile_belief = belief.sources(tile.position);
+            let belief_weight = wellbeing_for_tiles
+                .culture
+                .sacred_weight(tile_belief.total());
             tile_states.push(tile_state(
                 entity,
                 tile,
                 &morale_pressure_cfg,
                 graze_registry.patch(tile.position),
                 &labor_config.forage,
-                belief.get(tile.position),
+                tile_belief,
+                belief_weight,
             ));
             tile_tags.set(tile.position, tile.terrain_tags);
             if let Some(module) = food_module {

@@ -97,7 +97,7 @@ fn a_band_on_its_dead_is_credited_in_proportion_to_its_tie() {
     let (mut app, band) = world();
     app.world
         .resource_mut::<BeliefRegistry>()
-        .add(GRAVE, TEN_DEAD);
+        .add(GRAVE, core_sim::BeliefSource::Deaths, TEN_DEAD);
     stage(&mut app, band, Some(GRAVE), DIRECT_HOPS as u8);
     turn(&mut app);
     let tie = tie_of(&app, TEN_DEAD);
@@ -116,7 +116,7 @@ fn a_band_unreached_from_its_dead_learns_nothing() {
     let (mut app, band) = world();
     app.world
         .resource_mut::<BeliefRegistry>()
-        .add(GRAVE, TEN_DEAD);
+        .add(GRAVE, core_sim::BeliefSource::Deaths, TEN_DEAD);
     stage(
         &mut app,
         band,
@@ -133,7 +133,7 @@ fn a_band_with_no_anchor_learns_nothing() {
     let (mut app, band) = world();
     app.world
         .resource_mut::<BeliefRegistry>()
-        .add(GRAVE, TEN_DEAD);
+        .add(GRAVE, core_sim::BeliefSource::Deaths, TEN_DEAD);
     stage(&mut app, band, None, DIRECT_HOPS as u8);
     turn(&mut app);
     assert_eq!(ritual(&app, HOME), 0.0);
@@ -145,8 +145,8 @@ fn two_bands_of_one_people_pay_the_stronger_tie_alone() {
     let (mut app, band) = world();
     {
         let mut belief = app.world.resource_mut::<BeliefRegistry>();
-        belief.add(GRAVE, TEN_DEAD);
-        belief.add(OTHER_GRAVE, ONE_DEAD);
+        belief.add(GRAVE, core_sim::BeliefSource::Deaths, TEN_DEAD);
+        belief.add(OTHER_GRAVE, core_sim::BeliefSource::Deaths, ONE_DEAD);
     }
     stage(&mut app, band, Some(GRAVE), DIRECT_HOPS as u8);
     let mut second = app.world.get::<PopulationCohort>(band).unwrap().clone();
@@ -174,7 +174,7 @@ fn a_zero_lever_pays_nothing() {
         .insert_resource(LadderConfigHandle(std::sync::Arc::new(ladder)));
     app.world
         .resource_mut::<BeliefRegistry>()
-        .add(GRAVE, TEN_DEAD);
+        .add(GRAVE, core_sim::BeliefSource::Deaths, TEN_DEAD);
     stage(&mut app, band, Some(GRAVE), DIRECT_HOPS as u8);
     turn(&mut app);
     assert_eq!(ritual(&app, HOME), 0.0);

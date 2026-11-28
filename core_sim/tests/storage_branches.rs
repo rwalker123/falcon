@@ -1388,9 +1388,11 @@ fn the_ranking_puts_food_first() {
         app.world
             .resource_mut::<DiscoveryProgressLedger>()
             .add_progress(FACTION, core_sim::RITUAL_DISCOVERY_ID, scalar_one());
-        app.world
-            .resource_mut::<core_sim::BeliefRegistry>()
-            .add(camp(), 5.0);
+        app.world.resource_mut::<core_sim::BeliefRegistry>().add(
+            camp(),
+            core_sim::BeliefSource::Deaths,
+            5.0,
+        );
     };
     let (mut app, _) = chief_world(true, true, SPARE_HANDS, 0);
     ritual(&mut app);

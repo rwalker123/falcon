@@ -30,6 +30,9 @@ var h
 const TILE_X := 33
 const TILE_Y := 9
 const BELIEF_BRANCH := "belief"
+## The sacred-ground strength a tile holding belief carries here (the sim's `belief_weight`; the row is shown
+## wherever it is above zero).
+const BELIEF_WEIGHT := 0.4
 const STORES_BRANCH := "food_stores"
 const RITUAL := "ritual"
 const STORAGE := "storage"
@@ -126,6 +129,7 @@ func _tile(belief: float) -> Dictionary:
 	}
 	if belief > 0.0:
 		tile["belief"] = belief
+		tile["belief_weight"] = BELIEF_WEIGHT
 	return tile
 
 func _improvement_row(branch: String, rung: String) -> Dictionary:

@@ -101,9 +101,11 @@ fn tile_at(app: &App, position: UVec2) -> Entity {
 }
 
 fn stage_belief(app: &mut App, position: UVec2, amount: f32) {
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(position, amount);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        position,
+        core_sim::BeliefSource::Deaths,
+        amount,
+    );
 }
 
 fn stand_on(app: &mut App, band: Entity, position: UVec2) {

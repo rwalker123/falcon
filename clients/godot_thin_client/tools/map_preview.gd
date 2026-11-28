@@ -1773,6 +1773,30 @@ func _ready() -> void:
 			MAP_VIEW.TEMPERATURE_CONTOUR_COLOR))
 	_map.set_overlay_channel("")   # back to plain terrain for the states after this one
 
+	# States "map_sacred_ground" (issue #703) -- THE SACRED GROUND CHANNEL. Client-derived from the per-tile
+	# `belief_weight` the sim publishes (0 below its adoption line): a tile at 0 is the neutral grid fill, a
+	# tile above it a violet wash that strengthens with the weight. Offered only where some tile carries one,
+	# asked FIRST on a snapshot with none so a row that is simply always present cannot pass.
+	_display_snapshot(_snapshot_temperature(PASTURE_GRID_W, PASTURE_GRID_H))
+	_assert_map("a world with no sacred ground does not offer the Sacred ground channel",
+		not _roster_has_key(OverlayChannels.SACRED_GROUND_KEY))
+	_display_snapshot(_snapshot_sacred_ground(PASTURE_GRID_W, PASTURE_GRID_H))
+	_assert_map("a world that carries sacred ground does offer it",
+		_roster_has_key(OverlayChannels.SACRED_GROUND_KEY))
+	_map.set_overlay_channel(OverlayChannels.SACRED_GROUND_KEY)
+	_map._fit_map_to_view()
+	await _settle()
+	await _save("map_sacred_ground")
+	await _save_overlay_legend("map_sacred_ground_legend")
+	_assert_map("a tile with no sacred ground paints the neutral grid fill",
+		_map._tile_color(0, 0).is_equal_approx(MAP_VIEW.GRID_COLOR))
+	var faint_tile: Color = _map._tile_color(SACRED_FAINT_TILE.x, SACRED_FAINT_TILE.y)
+	var strong_tile: Color = _map._tile_color(SACRED_STRONG_TILE.x, SACRED_STRONG_TILE.y)
+	_assert_map("sacred ground is tinted, and a stronger weight is a stronger violet",
+		not faint_tile.is_equal_approx(MAP_VIEW.GRID_COLOR)
+			and absf(strong_tile.r - HudStyle.BELIEF.r) + absf(strong_tile.g - HudStyle.BELIEF.g) + absf(strong_tile.b - HudStyle.BELIEF.b) < absf(faint_tile.r - HudStyle.BELIEF.r) + absf(faint_tile.g - HudStyle.BELIEF.g) + absf(faint_tile.b - HudStyle.BELIEF.b))
+	_map.set_overlay_channel("")
+
 	# States "band lethal mark" (issue #614) — the ⚠ a band wears while it STANDS on killing ground.
 	# Two bands on the temperature field, one in the cold pocket and one on the temperate middle, so
 	# the mark's presence and its absence are in the SAME frame: a renderer that drew it for every
@@ -3793,6 +3817,25 @@ func _snapshot_temperature(width: int, height: int) -> Dictionary:
 		"populations": [],
 		"herds": [],
 	}
+
+## The sacred-ground fixture's two weighted tiles: one faint, one strong (every other tile carries none).
+const SACRED_FAINT_TILE := Vector2i(2, 2)
+const SACRED_STRONG_TILE := Vector2i(3, 2)
+const SACRED_FAINT_WEIGHT := 0.15
+const SACRED_STRONG_WEIGHT := 0.9
+
+## A flat world whose tiles carry `belief_weight` on a small cluster: the faint and strong tiles plus a
+## ring of middling ones, so the ramp is legible against the neutral fill.
+func _snapshot_sacred_ground(width: int, height: int) -> Dictionary:
+	var snapshot := _snapshot_temperature(width, height)
+	var weights := {SACRED_FAINT_TILE: SACRED_FAINT_WEIGHT, SACRED_STRONG_TILE: SACRED_STRONG_WEIGHT,
+		Vector2i(3, 3): 0.5, Vector2i(2, 3): 0.35, Vector2i(4, 2): 0.6}
+	for tile in snapshot["tiles"]:
+		var cell := Vector2i(int(tile["x"]), int(tile["y"]))
+		if weights.has(cell):
+			tile["belief"] = 20.0 * float(weights[cell])
+			tile["belief_weight"] = float(weights[cell])
+	return snapshot
 
 ## Does `color` appear anywhere in a box of `TEMPERATURE_PROBE_RADII` hex radii around one hex?
 ##

@@ -52,7 +52,34 @@ pub const NO_BELIEF: f32 = 0.0;
 /// row-major, like every other tile sweep in the engine.
 #[derive(Resource, Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BeliefRegistry {
-    tiles: BTreeMap<(u32, u32), f32>,
+    tiles: BTreeMap<(u32, u32), BeliefSources>,
+}
+
+/// **WHERE A PLACE'S BELIEF CAME FROM** — the three monotone sources, each in dead-equivalents.
+/// The tile's belief is their sum ([`BeliefSources::total`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct BeliefSources {
+    /// People who died while a band stood on the tile, at `belief_per_death` each.
+    pub deaths: f32,
+    /// Gatherings held on the tile, at `belief_per_gathering` each.
+    pub gatherings: f32,
+    /// A held monument's per-turn credit (`improvement_belief`).
+    pub improvements: f32,
+}
+
+impl BeliefSources {
+    /// The tile's belief: the sum of its three sources.
+    pub fn total(&self) -> f32 {
+        self.deaths + self.gatherings + self.improvements
+    }
+}
+
+/// Which stock a [`BeliefRegistry::add`] credit lands in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BeliefSource {
+    Deaths,
+    Gatherings,
+    Improvement,
 }
 
 impl BeliefRegistry {
@@ -62,22 +89,30 @@ impl BeliefRegistry {
     /// `amount` to the tile at `position`. An `amount` at or below [`NO_BELIEF`] is ignored, which
     /// is what keeps belief monotone and the registry sparse: no caller can draw a place down, and
     /// a zero accrual never mints an entry.
-    pub fn add(&mut self, position: UVec2, amount: f32) {
+    pub fn add(&mut self, position: UVec2, source: BeliefSource, amount: f32) {
         if amount <= NO_BELIEF {
             return;
         }
-        *self
-            .tiles
-            .entry((position.y, position.x))
-            .or_insert(NO_BELIEF) += amount;
+        let stocks = self.tiles.entry((position.y, position.x)).or_default();
+        match source {
+            BeliefSource::Deaths => stocks.deaths += amount,
+            BeliefSource::Gatherings => stocks.gatherings += amount,
+            BeliefSource::Improvement => stocks.improvements += amount,
+        }
     }
 
-    /// The belief standing on the tile at `position`; [`NO_BELIEF`] where none has ever accrued.
+    /// The belief standing on the tile at `position` — the TOTAL of its sources; [`NO_BELIEF`]
+    /// where none has ever accrued.
     pub fn get(&self, position: UVec2) -> f32 {
+        self.sources(position).total()
+    }
+
+    /// The per-source stocks on the tile at `position`; all zero where none has ever accrued.
+    pub fn sources(&self, position: UVec2) -> BeliefSources {
         self.tiles
             .get(&(position.y, position.x))
             .copied()
-            .unwrap_or(NO_BELIEF)
+            .unwrap_or_default()
     }
 
     /// **The deaths source.** `deaths` people died while their band stood on `position` — credit
@@ -88,27 +123,35 @@ impl BeliefRegistry {
     /// people who died there. A detached expedition's casualties and a far work party's (a row
     /// posted past `band_work_range`) are not where the band stands, and credit nothing.
     pub fn credit_deaths(&mut self, position: UVec2, deaths: f32, config: &BeliefConfig) {
-        self.add(position, deaths * config.belief_per_death);
+        self.add(
+            position,
+            BeliefSource::Deaths,
+            deaths * config.belief_per_death,
+        );
     }
 
     /// **The gatherings source.** One gathering was held on `position` — credit the place at
     /// `belief_per_gathering`. The caller decides *where*: the standing tile of the larger of the
     /// two bands that met, never a home.
     pub fn credit_gathering(&mut self, position: UVec2, config: &BeliefConfig) {
-        self.add(position, config.belief_per_gathering);
+        self.add(
+            position,
+            BeliefSource::Gatherings,
+            config.belief_per_gathering,
+        );
     }
 
     /// **The improvement source.** A held improvement of a rung `improvement_belief` names credits its
     /// own tile `per_turn`, through the same [`Self::add`] seam. See [`advance_improvement_belief`].
     pub fn credit_improvement(&mut self, position: UVec2, per_turn: f32) {
-        self.add(position, per_turn);
+        self.add(position, BeliefSource::Improvement, per_turn);
     }
 
     /// Every place holding belief, in row-major order.
     pub fn iter(&self) -> impl Iterator<Item = (UVec2, f32)> + '_ {
         self.tiles
             .iter()
-            .map(|(&(y, x), &belief)| (UVec2::new(x, y), belief))
+            .map(|(&(y, x), stocks)| (UVec2::new(x, y), stocks.total()))
     }
 
     pub fn len(&self) -> usize {
@@ -249,8 +292,8 @@ mod tests {
     #[test]
     fn add_accrues_on_the_named_tile_only() {
         let mut registry = BeliefRegistry::default();
-        registry.add(PLACE, ONE_DEATH);
-        registry.add(PLACE, ONE_DEATH);
+        registry.add(PLACE, BeliefSource::Deaths, ONE_DEATH);
+        registry.add(PLACE, BeliefSource::Deaths, ONE_DEATH);
         assert_eq!(registry.get(PLACE), ONE_DEATH + ONE_DEATH);
         assert_eq!(registry.get(ELSEWHERE), NO_BELIEF);
     }
@@ -259,10 +302,10 @@ mod tests {
     #[test]
     fn a_non_positive_amount_is_ignored() {
         let mut registry = BeliefRegistry::default();
-        registry.add(PLACE, NO_BELIEF);
+        registry.add(PLACE, BeliefSource::Deaths, NO_BELIEF);
         assert!(registry.is_empty(), "a zero accrual must not mint an entry");
-        registry.add(PLACE, ONE_DEATH);
-        registry.add(PLACE, -ONE_DEATH);
+        registry.add(PLACE, BeliefSource::Deaths, ONE_DEATH);
+        registry.add(PLACE, BeliefSource::Deaths, -ONE_DEATH);
         assert_eq!(registry.get(PLACE), ONE_DEATH);
     }
 
@@ -292,9 +335,9 @@ mod tests {
     #[test]
     fn iteration_is_row_major() {
         let mut registry = BeliefRegistry::default();
-        registry.add(UVec2::new(1, 2), ONE_DEATH);
-        registry.add(UVec2::new(5, 0), ONE_DEATH);
-        registry.add(UVec2::new(0, 2), ONE_DEATH);
+        registry.add(UVec2::new(1, 2), BeliefSource::Deaths, ONE_DEATH);
+        registry.add(UVec2::new(5, 0), BeliefSource::Deaths, ONE_DEATH);
+        registry.add(UVec2::new(0, 2), BeliefSource::Deaths, ONE_DEATH);
         let order: Vec<UVec2> = registry.iter().map(|(tile, _)| tile).collect();
         assert_eq!(
             order,

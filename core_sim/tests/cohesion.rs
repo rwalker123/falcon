@@ -262,9 +262,11 @@ fn belief_underfoot_raises_the_ceiling_and_belief_beside_does_not() {
         let at = position_of(&app, band);
         if let Some((underfoot, amount)) = staged {
             let place = if underfoot { at } else { beside(&app, at) };
-            app.world
-                .resource_mut::<BeliefRegistry>()
-                .add(place, amount);
+            app.world.resource_mut::<BeliefRegistry>().add(
+                place,
+                core_sim::BeliefSource::Deaths,
+                amount,
+            );
         }
         let group = cohort(&app, band).total().to_u32() as f32;
         morale_turn(&mut app);

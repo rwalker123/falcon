@@ -158,7 +158,8 @@ pub use band_names::{
 };
 pub use belief::{
     advance_improvement_belief, advance_ritual_trickle, credit_ritual_lesson,
-    credit_ritual_practice, BeliefRegistry, NO_BELIEF, RITUAL_DISCOVERY_ID, RITUAL_KNOWLEDGE,
+    credit_ritual_practice, BeliefRegistry, BeliefSource, BeliefSources, NO_BELIEF,
+    RITUAL_DISCOVERY_ID, RITUAL_KNOWLEDGE,
 };
 pub use belief_config::{
     load_belief_config_from_env, BeliefConfig, BeliefConfigHandle, BeliefConfigMetadata,

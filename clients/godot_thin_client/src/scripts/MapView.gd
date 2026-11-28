@@ -199,7 +199,25 @@ const SPECIAL_PAINT_OVERLAY_KEYS: Array[String] = [
 	PASTURE_OVERLAY_KEY,
 	FORAGE_OVERLAY_KEY,
 	TEMPERATURE_OVERLAY_KEY,
+	SACRED_GROUND_OVERLAY_KEY,
 ]
+# --- SACRED GROUND overlay (issue #703) --------------------------------------------------------
+# Where the player's dead and gatherings have made the ground hold belief, painted by the sim's own
+# sacred-ground strength (`tile_belief_weight`, [0,1), 0 below its adoption line -- the client restates
+# neither the formula nor the line). CLIENT-DERIVED like `temperature`: a reshape of `tile_belief_weight`,
+# no wire raster. A tile at 0 is no tint (the neutral grid fill); anything above climbs a violet ramp from
+# a faint wash to a strong one in `HudStyle.BELIEF`, the ancestors' colour the urn marks and reach outline
+# already wear -- those still draw on top.
+const SACRED_GROUND_OVERLAY_KEY := OverlayChannels.SACRED_GROUND_KEY
+const SACRED_GROUND_OVERLAY_LABEL := OverlayChannels.SACRED_GROUND_LABEL
+const SACRED_GROUND_OVERLAY_DESCRIPTION := OverlayChannels.SACRED_GROUND_DESCRIPTION
+## How far toward `HudStyle.BELIEF` the ramp's faintest and strongest ends are washed over the grid fill.
+const SACRED_GROUND_FAINT_BLEND := 0.28
+const SACRED_GROUND_STRONG_BLEND := 0.95
+## The legend's sample strengths (a fraction of the ramp), low -> high, and their words.
+const SACRED_GROUND_LEGEND_SAMPLES: Array[float] = [0.1, 0.5, 1.0]
+const SACRED_GROUND_LEGEND_LABELS: Array[String] = ["Faint", "Hallowed", "Strong"]
+const SACRED_GROUND_NONE_LABEL := "Not sacred ground"
 # --- DANGER overlays (Predators Phase 0) -------------------------------------------------------
 # TWO derived-danger channels, both per-ENTITY properties the native decoder projects onto tiles
 # (max over the herds standing on each hex). Neither is a per-tile field or a two-tone ramp: both
@@ -245,6 +263,7 @@ static var READY_FOR_IMPROVEMENT_OVERLAY_COLOR: Color = Color()  # DERIVED: HudS
 const DEFERRED_OVERLAY_BUILDERS := {
 	ReadyForImprovement.CHANNEL_KEY: "_build_ready_for_improvement_channel",
 	TEMPERATURE_OVERLAY_KEY: "_build_temperature_channel",
+	SACRED_GROUND_OVERLAY_KEY: "_build_sacred_ground_channel",
 }
 # Tile "Height" is a relative 0..100 indicator (not meters) so a player can reason
 # about line of sight: a higher tile can occlude the tile behind it. Elevation is
@@ -1031,6 +1050,15 @@ var tile_temperature: Dictionary = {}
 # by Vector2i(x, y) and held only where it is above zero; read by `_tile_info_at` for the Tile-card
 # Ancestors row. A place keeps its dead, so it is not in `FOW_DISCOVERED_HIDDEN_KEYS`.
 var tile_belief: Dictionary = {}
+# Per-tile SACRED-GROUND strength (`TileState.beliefWeight`, [0,1)), keyed by Vector2i(x, y) and held only
+# where it is above zero -- the sim already zeroes it below its adoption line, so a key here IS "this is
+# sacred ground". Read by `_tile_info_at` for the Tile-card Sacred ground row and by the `sacred_ground`
+# overlay channel.
+var tile_belief_weight: Dictionary = {}
+# Per-tile belief split by source, `Vector3(deaths, gatherings, monument)` (dead-equivalents; they sum to
+# `tile_belief`), held wherever the tile holds any belief. Read by `_tile_info_at` for the Tile card's
+# source split bar.
+var tile_belief_sources: Dictionary = {}
 # Per-tile GRAZE — the pasture layer (decoded from TileState: graze_biomass / graze_capacity /
 # graze_ecology_phase), keyed by Vector2i(x, y). Read by `_tile_info_at` for the Tile-card Pasture
 # rows and by `_build_pasture_legend` for the map-wide standing-stock figure. Entries are stored ONLY
@@ -1692,6 +1720,8 @@ func display_snapshot(snapshot: Dictionary) -> Dictionary:
 		tile_habitability.clear()
 		tile_temperature.clear()
 		tile_belief.clear()
+		tile_belief_weight.clear()
+		tile_belief_sources.clear()
 		tile_graze.clear()
 		tile_forage.clear()
 		tile_river_edges.clear()
@@ -1814,8 +1844,18 @@ func _ingest_tile(tile_dict: Dictionary) -> void:
 	var belief: float = float(tile_dict.get("belief", 0.0))
 	if belief > 0.0:
 		tile_belief[cell] = belief
+		tile_belief_sources[cell] = Vector3(
+			float(tile_dict.get("belief_from_deaths", 0.0)),
+			float(tile_dict.get("belief_from_gatherings", 0.0)),
+			float(tile_dict.get("belief_from_monument", 0.0)))
 	else:
 		tile_belief.erase(cell)
+		tile_belief_sources.erase(cell)
+	var belief_weight: float = float(tile_dict.get("belief_weight", 0.0))
+	if belief_weight > 0.0:
+		tile_belief_weight[cell] = belief_weight
+	else:
+		tile_belief_weight.erase(cell)
 	# Graze: only a tile whose biome actually carries pasture gets an entry (see `tile_graze`). A
 	# zero-capacity tile is a *dead* one, and the Tile card must print nothing there rather than
 	# "0 / 0" — so a tile whose capacity fell to zero must lose its entry, not keep a stale one.
@@ -3565,6 +3605,13 @@ func _tile_info_at(col: int, row: int) -> Dictionary:
 		info["temperature"] = float(tile_temperature[tile_key])
 	if tile_belief.has(tile_key):
 		info["belief"] = float(tile_belief[tile_key])
+	if tile_belief_weight.has(tile_key):
+		info["belief_weight"] = float(tile_belief_weight[tile_key])
+	if tile_belief_sources.has(tile_key):
+		var sources: Vector3 = tile_belief_sources[tile_key]
+		info["belief_from_deaths"] = sources.x
+		info["belief_from_gatherings"] = sources.y
+		info["belief_from_monument"] = sources.z
 	# Pasture (graze). SPLIT across FOW_DISCOVERED_HIDDEN_KEYS rather than kept whole: `graze_capacity`
 	# is a property of the GROUND — you can read a steppe's carrying capacity from a ridge, and the
 	# biome above it is already remembered — while `graze_biomass` and the phase derived from it are
@@ -4191,6 +4238,8 @@ func _tile_color(x: int, y: int) -> Color:
 		return _pasture_color(x, y, overlay_value)
 	if active_overlay_key == FORAGE_OVERLAY_KEY:
 		return _forage_color(x, y, overlay_value)
+	if active_overlay_key == SACRED_GROUND_OVERLAY_KEY:
+		return _sacred_ground_color(overlay_value)
 	if active_overlay_key == TEMPERATURE_OVERLAY_KEY:
 		# The FILL carries temperature alone. Whether this hex kills is drawn on top of it, by
 		# `_draw_temperature_lethality` — see the constants block.
@@ -4236,6 +4285,14 @@ func _forage_color(_x: int, _y: int, normalized: float) -> Color:
 ## legend swatches, so they cannot drift apart.
 func _forage_ramp_color(normalized_capacity: float) -> Color:
 	return FORAGE_POOR_COLOR.lerp(FORAGE_RICH_COLOR, clampf(normalized_capacity, 0.0, 1.0))
+
+## Sacred-ground overlay colour for one tile: no tint at zero strength, else a violet wash from faint to
+## strong. Shared by the map paint and the legend swatches so they cannot drift apart.
+func _sacred_ground_color(weight: float) -> Color:
+	if weight <= 0.0:
+		return GRID_COLOR
+	var blend := lerpf(SACRED_GROUND_FAINT_BLEND, SACRED_GROUND_STRONG_BLEND, clampf(weight, 0.0, 1.0))
+	return GRID_COLOR.lerp(HudStyle.BELIEF, blend)
 
 ## The temperature ramp: five stops walked cold -> warm, `normalized` being the tile's reading placed
 ## MIN-MAX within this map's own range (see the constants block for why min-max and not max-relative).
@@ -4448,6 +4505,11 @@ func has_terrain_tag_data() -> bool:
 func has_temperature_data() -> bool:
 	return not tile_temperature.is_empty()
 
+## Does this world hold any sacred ground? The channel is synthesized from `tile_belief_weight`, so it
+## is offered only once some tile carries one (gated on the tiles, never the lazily built raster).
+func has_sacred_ground_data() -> bool:
+	return not tile_belief_weight.is_empty()
+
 ## The tint a channel paints the map in — what the minimap's legend button wears as its face when the
 ## channel has no icon of its own. A channel with no row takes `OVERLAY_FALLBACK_COLOR`, which is a
 ## RAMP TARGET for an unknown wire channel and NOT a description of anything: a caller wearing this
@@ -4492,6 +4554,8 @@ func _legend_for_current_view() -> Dictionary:
 		return _build_pasture_legend()
 	if active_overlay_key == FORAGE_OVERLAY_KEY:
 		return _build_forage_legend()
+	if active_overlay_key == SACRED_GROUND_OVERLAY_KEY:
+		return _build_sacred_ground_legend()
 	if active_overlay_key == TEMPERATURE_OVERLAY_KEY:
 		return _build_temperature_legend()
 	if active_overlay_key == "culture" and not highlighted_culture_layer_set.is_empty():
@@ -5182,6 +5246,45 @@ func _build_temperature_channel() -> void:
 			normalized[idx] = ((reading - coldest) / span if span > 0.0 else 0.0)
 	_add_overlay_channel(TEMPERATURE_OVERLAY_KEY, normalized, raw,
 		TEMPERATURE_OVERLAY_LABEL, TEMPERATURE_OVERLAY_DESCRIPTION)
+
+## Synthesize the SACRED GROUND channel from `tile_belief_weight`: the raster is the sim's own strength
+## per tile (already in [0,1) and 0 off sacred ground), so normalized and raw are the same plane.
+func _build_sacred_ground_channel() -> void:
+	if grid_width <= 0 or grid_height <= 0:
+		return
+	var total: int = grid_width * grid_height
+	var plane := PackedFloat32Array()
+	plane.resize(total)
+	for cell in tile_belief_weight:
+		var cell_xy: Vector2i = cell
+		if cell_xy.x < 0 or cell_xy.x >= grid_width or cell_xy.y < 0 or cell_xy.y >= grid_height:
+			continue
+		plane[cell_xy.y * grid_width + cell_xy.x] = float(tile_belief_weight[cell_xy])
+	_add_overlay_channel(SACRED_GROUND_OVERLAY_KEY, plane, plane,
+		SACRED_GROUND_OVERLAY_LABEL, SACRED_GROUND_OVERLAY_DESCRIPTION)
+
+## Legend for the SACRED GROUND channel: ramp samples, each painted through `_sacred_ground_color`, plus
+## the neutral "no tint" row. No min/avg/max -- the channel's zero is categorical, not "low".
+func _build_sacred_ground_legend() -> Dictionary:
+	var rows: Array = []
+	for i in SACRED_GROUND_LEGEND_SAMPLES.size():
+		rows.append({
+			"color": _sacred_ground_color(SACRED_GROUND_LEGEND_SAMPLES[i]),
+			"label": SACRED_GROUND_LEGEND_LABELS[i],
+			"value_text": "",
+		})
+	rows.append({
+		"color": GRID_COLOR,
+		"label": SACRED_GROUND_NONE_LABEL,
+		"value_text": "",
+	})
+	return {
+		"key": SACRED_GROUND_OVERLAY_KEY,
+		"title": String(overlay_channel_labels.get(SACRED_GROUND_OVERLAY_KEY, SACRED_GROUND_OVERLAY_LABEL)),
+		"description": SACRED_GROUND_OVERLAY_DESCRIPTION,
+		"rows": rows,
+		"stats": {"min": 0.0, "max": 1.0, "avg": 0.0},
+	}
 
 ## Forget every deferred channel's last build. Called at the END of an ingest, because the sources a
 ## deferred channel is derived from have just been replaced.

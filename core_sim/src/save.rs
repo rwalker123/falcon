@@ -170,7 +170,8 @@ pub const SAVE_MAGIC: [u8; 8] = *b"SHDWSAV\x01";
 /// | 73 | A scenario can name the plants of a tile: `Tile` gained `flora_override` (sorted, deduplicated species keys, `None` where worldgen set nothing), which `forage::tile_flora_composition` realizes the biome's basket from instead of the seeded subset. The tile rides `TileRecord`, so a version-72 blob lacks it |
 /// | 74 | Food ages at the source: a work party's load is `WorkParty::load`, FIFO `Lot`s (age, cargo, bulk, classes, goods) in place of the four load scalars, and a `Walker` carries its pack's `lots` in place of `cargo` / `classes` / `bulk` / `goods`; a `HomewardWalk`'s `classes` became `aged` (food by the age it had kept when the walk began). A version-73 blob does not decode. |
 /// | 75 | Settlements are derived (#176): `SimState` gained `settlement_stages` (`SettlementStages`: each band's own stage and each tribe's, the edge gate of the city event) and lost `settlements` (the `Settlement` / `TownCenter` components are deleted); `SedentarizationEntry` lost `stage`; `CommandEventKind` lost `FoundSettlement` and `SedentarizationPrompt` and gained `SettlementStageReached`; the `food_stores:granary` rung exists. A version-74 blob does not decode |
-pub const SAVE_FORMAT_VERSION: u32 = 75;
+/// | 76 | Belief carries its sources (#703): `BeliefRegistry` holds per-tile `BeliefSources` (`deaths`, `gatherings`, `improvements`) in place of one scalar, so `SimState.belief` changes shape. A version-75 blob does not decode |
+pub const SAVE_FORMAT_VERSION: u32 = 76;
 
 /// gzip level for the payload document.
 ///

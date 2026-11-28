@@ -1227,6 +1227,19 @@ func _ready() -> void:
 	_assert_standing_bill_breakdown()
 	_click_disclosure(BAND_FIXTURE_DISCLOSURE_UPKEEP)   # toggle shut before the next state
 
+	# (b5) THE COHESION CEILING BESIDE THE HEAD-COUNT (#703) -- `· holds N` after the People head's count.
+	# Two bands in the same frame shape: one under its ceiling (the clause in the quiet register) and one
+	# over it (amber), plus a band that publishes no ceiling (no clause at all).
+	await _holds_clause_state("band_panel_holds_under", HOLDS_HEADCOUNT_UNDER, HOLDS_CEILING, false)
+	await _holds_clause_state("band_panel_holds_over", HOLDS_HEADCOUNT_OVER, HOLDS_CEILING, true)
+	var no_ceiling := _band_fixture()
+	no_ceiling["cohesion_headcount"] = 0
+	no_ceiling["cohesion_ceiling"] = 0
+	_push_bands([no_ceiling])
+	await _settle()
+	_assert_band_panel("a band that publishes no cohesion ceiling carries no `holds` clause",
+		_holds_clause_label() == null)
+
 	# …and the NEGATIVE half, without which the two frames above pass on a row that renders
 	# unconditionally: a band holding nothing that eats a good draws NO row and registers NO caret.
 	# This is the one place this readout differs from Fodder, which keeps a dormant dash.
@@ -9973,7 +9986,7 @@ func _zone_head_readout(node: Node, title: String) -> String:
 			if child is Label:
 				labels.append(child)
 		if labels.size() >= 2 and (labels[0] as Label).text == title.to_upper():
-			return (labels[labels.size() - 1] as Label).text
+			return (labels[1] as Label).text
 	for child in node.get_children():
 		var found := _zone_head_readout(child, title)
 		if found != "":
@@ -13134,6 +13147,51 @@ func _settle() -> void:
 	await get_tree().process_frame
 	RenderingServer.force_draw()
 	await get_tree().process_frame
+
+const HOLDS_CEILING := 150
+const HOLDS_HEADCOUNT_UNDER := 120
+const HOLDS_HEADCOUNT_OVER := 182
+
+## The People head's third label (the `· holds N` clause), or null where the band states none.
+func _holds_clause_label() -> Label:
+	var band_zone: Node = _panel._zones.get(BandCityPanel.ZONE_BAND)
+	if band_zone == null:
+		return null
+	return _find_holds_label(band_zone)
+
+func _find_holds_label(node: Node) -> Label:
+	if node is HBoxContainer:
+		var labels: Array = []
+		for child in node.get_children():
+			if child is Label:
+				labels.append(child)
+		if labels.size() >= 3 and (labels[0] as Label).text == HudWorkVocab.ZONE_HEADER_PEOPLE.to_upper():
+			return labels[2] as Label
+	for child in node.get_children():
+		var found := _find_holds_label(child)
+		if found != null:
+			return found
+	return null
+
+## One band at `headcount` against `ceiling`: renders the frame and asserts the clause's words, ink and tooltip.
+func _holds_clause_state(state_name: String, headcount: int, ceiling: int, over: bool) -> void:
+	var band := _band_fixture()
+	band["cohesion_headcount"] = headcount
+	band["cohesion_ceiling"] = ceiling
+	_push_bands([band])
+	await _settle()
+	await _save(state_name)
+	var clause := _holds_clause_label()
+	if clause == null:
+		_assert_band_panel("%s: the People head carries a `holds` clause" % state_name, false)
+		return
+	_assert_band_panel("%s: the clause reads `%s`" % [state_name, HudWorkVocab.PEOPLE_HOLDS_FORMAT % ceiling],
+		clause.text == HudWorkVocab.PEOPLE_HOLDS_FORMAT % ceiling)
+	var ink: Color = clause.get_theme_color("font_color")
+	_assert_band_panel("%s: the clause is %s" % [state_name, "amber" if over else "quiet"],
+		(ink == HudStyle.WARN) == over)
+	_assert_band_panel("%s: the clause's tooltip says what the ceiling is" % state_name,
+		clause.tooltip_text == HudWorkVocab.PEOPLE_HOLDS_TOOLTIP_FORMAT % ceiling)
 
 func _save(name: String) -> void:
 	_current_state = name

@@ -9,7 +9,7 @@ extends RefCounted
 ## The checkpoints this chapter owes the walk — assertions made plus frames saved, as a FLOOR.
 ## See `ui_preview.gd`'s `CHAPTER_EXPECTED_CHECKPOINTS` for what it catches and why it lives here.
 const CrewFx := preload("res://tools/ui_preview/fixtures_crew.gd")
-const EXPECTED_CHECKPOINTS := 122
+const EXPECTED_CHECKPOINTS := 130
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const BaseFx := preload("res://tools/ui_preview/fixtures_base.gd")
@@ -2529,11 +2529,17 @@ func run(harness) -> void:
 	# would test the control's chrome instead of the answer.
 	_assert_the_roster_names_one_road_kit_per_rung()
 
-	# ---- SACRED GROUND ON THE TILE CARD (#870) — APPENDED. The card's `Sacred ground` row exists only on
-	# a hex that IS the sacred ground of one of the player's own bands, drawn with the Beliefs
-	# pull-down's bar and word. A hex that holds dead no band of the player's holds has no row at all.
+	# ---- SACRED GROUND ON THE TILE CARD (#870, widened by #703) — APPENDED. The card's `Sacred ground`
+	# row exists on ANY hex the sim calls sacred ground (`belief_weight` > 0), drawn with the Beliefs
+	# pull-down's bar and word off the tile's own weight, with a thin split bar of its three sources
+	# beneath. Its hover names who honours it, or says none of the player's bands does. A hex holding
+	# belief the sim does not call sacred (weight 0) has no row at all.
 	var ground_tile := BaseFx.food_tile_fixture()
 	ground_tile["belief"] = SACRED_TILE_BELIEF
+	ground_tile["belief_weight"] = SACRED_TILE_WEIGHT
+	ground_tile["belief_from_deaths"] = SACRED_TILE_FROM_DEATHS
+	ground_tile["belief_from_gatherings"] = SACRED_TILE_FROM_GATHERINGS
+	ground_tile["belief_from_monument"] = SACRED_TILE_FROM_MONUMENT
 	var holder := BandFx.band_fixture()
 	holder["has_belief_anchor"] = true
 	holder["belief_anchor_x"] = int(ground_tile["x"])
@@ -2546,13 +2552,34 @@ func run(harness) -> void:
 	var ground_text := "\n".join(h._hud._drawer._tile_terrain_lines(ground_tile))
 	h._assert_hud("the tile card states an own band's sacred ground — `%s`" % SACRED_TILE_ROW_TEXT,
 		ground_text.contains(SACRED_TILE_ROW_TEXT))
+	h._assert_hud("…with a sources row beneath it", ground_text.contains(DetailFormat.SACRED_SOURCES_ROW + DetailFormat.DETAIL_KV_SEPARATOR))
+	h._assert_hud("…whose sentence omits no stocked source — `%s`" % SACRED_TILE_SOURCES_SENTENCE,
+		DetailFormat.sacred_sources_sentence(ground_tile) == SACRED_TILE_SOURCES_SENTENCE)
+	h._assert_hud("…and its bar is %d pips wide, one violet shade per source" % DetailFormat.SACRED_SOURCES_PIPS,
+		_sources_pips_total(DetailFormat.sacred_sources_row(ground_tile)) == DetailFormat.SACRED_SOURCES_PIPS)
+	h._assert_hud("a held tile's hover names the band that honours it",
+		DetailFormat.sacred_ground_hover(ground_tile, [holder]).begins_with("Honoured by"))
+	# (b) UNHELD: belief the sim calls sacred, but none of the player's bands holds it.
 	var held_elsewhere := holder.duplicate()
 	held_elsewhere["belief_anchor_x"] = int(ground_tile["x"]) + 1
 	h._hud.update_band_alerts([held_elsewhere])
 	h._show_tile(ground_tile)
 	await h._settle()
-	h._assert_hud("a hex holding dead that none of the player's bands holds as its sacred ground has no row",
-		not "\n".join(h._hud._drawer._tile_terrain_lines(ground_tile)).contains(DetailFormat.SACRED_GROUND_ROW))
+	h._assert_hud("a sacred hex no band of the player's holds still has its row",
+		"\n".join(h._hud._drawer._tile_terrain_lines(ground_tile)).contains(SACRED_TILE_ROW_TEXT))
+	h._assert_hud("…and its hover says none of the player's bands honours it",
+		DetailFormat.sacred_ground_hover(ground_tile, [held_elsewhere]) == DetailFormat.SACRED_GROUND_UNHELD_HOVER)
+	await h._save("tile_sacred_ground_unheld")
+	# (c) belief the sim does not call sacred: weight 0 -> no row, no sources row.
+	var below_line := ground_tile.duplicate()
+	below_line["belief_weight"] = 0.0
+	h._show_tile(below_line)
+	await h._settle()
+	var below_text := "\n".join(h._hud._drawer._tile_terrain_lines(below_line))
+	h._assert_hud("a hex holding belief at weight 0 has no Sacred ground row and no sources row",
+		not below_text.contains(DetailFormat.SACRED_GROUND_ROW)
+			and not below_text.contains(DetailFormat.SACRED_SOURCES_ROW + DetailFormat.DETAIL_KV_SEPARATOR))
+	await h._save("tile_sacred_ground_none")
 
 	# **PUT THE ROSTER BACK.** Everything after this chapter renders against whatever roster it
 	# inherits, and a band left standing here is a band the next chapter never asked for.
@@ -2564,6 +2591,16 @@ func run(harness) -> void:
 const SACRED_TILE_BELIEF := 23.6
 const SACRED_TILE_WEIGHT := 0.6
 const SACRED_TILE_ROW_TEXT := "Sacred ground: ▰▰▰▱▱ hallowed"
+## The three source stocks (they sum to `SACRED_TILE_BELIEF`'s whole-number reading, 12 + 3 + 2 = 17 here is
+## the dead-equivalent figure the sentence prints) and the sentence they state.
+const SACRED_TILE_FROM_DEATHS := 12.2
+const SACRED_TILE_FROM_GATHERINGS := 2.9
+const SACRED_TILE_FROM_MONUMENT := 1.8
+const SACRED_TILE_SOURCES_SENTENCE := "From the dead 12 · from gatherings 3 · from the monument 2"
+
+## Pips the sources row's rendered value carries, summed over its colour runs.
+func _sources_pips_total(row: Dictionary) -> int:
+	return String(row.get("line", "")).count(HudDisclosureVocab.BELIEFS_BAR_FILLED)
 
 # ---- THE ROAD LADDER'S OWN FIXTURE NUMBERS AND ITS EXPECTED SENTENCES ---------------------------
 #

@@ -2076,13 +2076,20 @@ label or glyph fails.
   term zeroed is re-opened and the popover's extra wrapped lines must differ by at most one.
 - **ABSENT** — a band at zero cohesion term draws no `too many to hold together` row.
 
-## `chapters/land_readouts.gd` — the tile card's Sacred ground row (#870)
+## `chapters/land_readouts.gd` — the tile card's Sacred ground row (#870, #703)
 
-`EXPECTED_CHECKPOINTS` **122**, RE-MEASURED: one frame and two claims, appended after the road-kit
-roster claim and before the roster restore. The food tile, staged as a player band's sacred ground at
-anchor weight 0.6 — frame **`tile_sacred_ground`**, the card reading `Sacred ground: ▰▰▰▱▱ hallowed`
-(a literal) — then the same tile with the band's anchor moved one hex over, asserting no
-`Sacred ground` row.
+`EXPECTED_CHECKPOINTS` **130**: appended after the road-kit roster claim and before the roster restore.
+The food tile carries `belief_weight` 0.6 and three source stocks (12.2 / 2.9 / 1.8) and is staged as a
+player band's sacred ground — frame **`tile_sacred_ground`**, `Sacred ground: ▰▰▰▱▱ hallowed` over the
+12-pip `From` split bar, with claims on the sources sentence, the pip total and the held hover. The
+holder's anchor moved one hex over — **`tile_sacred_ground_unheld`**: the row stays, its hover reads
+`None of your bands honours it.` Then weight 0 — **`tile_sacred_ground_none`**: no Sacred ground and no
+`From` row. `tile_branches.gd`'s `_tile` gives a tile with belief `belief_weight` 0.4 (the row's gate).
+
+`map_preview` carries **`map_sacred_ground`** (+ `_legend`): not offered on a world with no weights,
+offered with them, a zero tile the neutral grid fill, a stronger weight a stronger violet.
+`band_panel_preview` carries **`band_panel_holds_under`** / **`_over`** (the People head's `· holds N`,
+quiet vs `HudStyle.WARN`, tooltip asserted) and a no-ceiling band with no clause.
 
 ## The ⚠'s one producer, and the biomass quantiser (this arc)
 

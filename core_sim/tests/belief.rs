@@ -188,9 +188,11 @@ fn a_tiles_belief_is_on_the_frame_and_a_change_produces_a_tile_delta() {
     let fx = fixture(&mut app);
     publish_baseline_snapshot(&mut app.world);
 
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(fx.away, STAGED_BELIEF);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        fx.away,
+        core_sim::BeliefSource::Deaths,
+        STAGED_BELIEF,
+    );
     publish_baseline_snapshot(&mut app.world);
 
     let history = app.world.resource::<SnapshotHistory>();
@@ -235,9 +237,11 @@ fn a_tiles_belief_is_on_the_frame_and_a_change_produces_a_tile_delta() {
 fn belief_round_trips_the_checkpoint_and_the_save() {
     let mut app = one_faction_world();
     let fx = fixture(&mut app);
-    app.world
-        .resource_mut::<BeliefRegistry>()
-        .add(fx.away, STAGED_BELIEF);
+    app.world.resource_mut::<BeliefRegistry>().add(
+        fx.away,
+        core_sim::BeliefSource::Deaths,
+        STAGED_BELIEF,
+    );
     let staged = app.world.resource::<BeliefRegistry>().clone();
 
     let checkpoint = capture_sim_state(&app.world);
@@ -248,4 +252,143 @@ fn belief_round_trips_the_checkpoint_and_the_save() {
     let blob = encode_save(&app.world).expect("the world encodes");
     let (_, payload) = decode_save(&blob).expect("the save decodes");
     assert_eq!(payload.sim.belief, staged);
+}
+
+/// Per-source stocks staged on the tile for the source tests — distinct, so a crossed wire shows.
+const STAGED_DEATHS: f32 = 2.0;
+const STAGED_GATHERINGS: f32 = 3.0;
+const STAGED_MONUMENT: f32 = 4.0;
+/// A stock short of the adoption line (`culture.min_anchor_belief`), by this much.
+const SHORT_OF_THE_LINE: f32 = 0.25;
+
+/// **Each source lands in its own stock, and the stocks sum to the tile's belief.** Driven through
+/// the three real credit seams, not `add` alone.
+#[test]
+fn deaths_a_gathering_and_a_monument_land_in_their_own_stocks_and_sum_to_the_total() {
+    let app = one_faction_world();
+    let config = app.world.resource::<BeliefConfigHandle>().get();
+    let place = UVec2::new(1, 1);
+    let mut registry = BeliefRegistry::default();
+    registry.credit_deaths(place, STAGED_DEATHS / config.belief_per_death, &config);
+    registry.credit_gathering(place, &config);
+    registry.credit_improvement(place, STAGED_MONUMENT);
+
+    let sources = registry.sources(place);
+    assert!((sources.deaths - STAGED_DEATHS).abs() < RATIO_EPSILON);
+    assert_eq!(sources.gatherings, config.belief_per_gathering);
+    assert_eq!(sources.improvements, STAGED_MONUMENT);
+    assert_eq!(registry.get(place), sources.total());
+    assert_eq!(
+        registry.get(place),
+        sources.deaths + sources.gatherings + sources.improvements
+    );
+}
+
+/// **The frame carries where belief came from, and whether it is sacred ground.** Asserted on the
+/// ENCODED envelope. The weight is the band's own `anchor_weight` at/above `min_anchor_belief` and
+/// zero below it.
+#[test]
+fn the_frame_carries_each_source_and_the_sacred_ground_weight() {
+    let mut app = one_faction_world();
+    let fx = fixture(&mut app);
+    let wellbeing = app
+        .world
+        .resource::<core_sim::WellbeingConfigHandle>()
+        .get();
+    let culture = &wellbeing.culture;
+    let short = fx.away;
+    let sacred = fx.home;
+    {
+        let mut registry = app.world.resource_mut::<BeliefRegistry>();
+        *registry = BeliefRegistry::default();
+        registry.add(
+            short,
+            core_sim::BeliefSource::Deaths,
+            culture.min_anchor_belief - SHORT_OF_THE_LINE,
+        );
+        registry.add(sacred, core_sim::BeliefSource::Deaths, STAGED_DEATHS);
+        registry.add(
+            sacred,
+            core_sim::BeliefSource::Gatherings,
+            STAGED_GATHERINGS,
+        );
+        registry.add(sacred, core_sim::BeliefSource::Improvement, STAGED_MONUMENT);
+    }
+    publish_baseline_snapshot(&mut app.world);
+
+    let history = app.world.resource::<SnapshotHistory>();
+    let snapshot = history
+        .latest_entry()
+        .expect("a snapshot was captured")
+        .snapshot;
+    let bytes = sim_schema::encode_snapshot_flatbuffer(snapshot.as_ref());
+    let envelope = fb::root_as_envelope(bytes.as_ref()).expect("a valid envelope");
+    let tiles = envelope
+        .payload_as_snapshot()
+        .expect("a snapshot payload")
+        .map()
+        .and_then(|map| map.tiles())
+        .expect("the tile list is published");
+    let at = |position: UVec2| {
+        tiles
+            .iter()
+            .find(|tile| tile.x() == position.x && tile.y() == position.y)
+            .expect("every tile is published")
+    };
+
+    let tile = at(sacred);
+    assert_eq!(tile.beliefFromDeaths(), STAGED_DEATHS);
+    assert_eq!(tile.beliefFromGatherings(), STAGED_GATHERINGS);
+    assert_eq!(tile.beliefFromMonument(), STAGED_MONUMENT);
+    assert_eq!(
+        tile.belief(),
+        tile.beliefFromDeaths() + tile.beliefFromGatherings() + tile.beliefFromMonument()
+    );
+    assert_eq!(
+        tile.beliefWeight(),
+        culture.anchor_weight(STAGED_DEATHS + STAGED_GATHERINGS + STAGED_MONUMENT)
+    );
+
+    let tile = at(short);
+    assert!(tile.belief() > NO_BELIEF, "the short tile does hold belief");
+    assert_eq!(
+        tile.beliefWeight(),
+        NO_BELIEF,
+        "belief short of the adoption line is not sacred ground"
+    );
+}
+
+/// **The per-source registry round-trips the checkpoint and the save**, each stock intact.
+#[test]
+fn per_source_belief_round_trips_the_checkpoint_and_the_save() {
+    let mut app = one_faction_world();
+    let fx = fixture(&mut app);
+    {
+        let mut registry = app.world.resource_mut::<BeliefRegistry>();
+        registry.add(fx.away, core_sim::BeliefSource::Deaths, STAGED_DEATHS);
+        registry.add(
+            fx.away,
+            core_sim::BeliefSource::Gatherings,
+            STAGED_GATHERINGS,
+        );
+        registry.add(
+            fx.away,
+            core_sim::BeliefSource::Improvement,
+            STAGED_MONUMENT,
+        );
+    }
+    let staged = app.world.resource::<BeliefRegistry>().clone();
+
+    let checkpoint = capture_sim_state(&app.world);
+    app.world.insert_resource(BeliefRegistry::default());
+    restore_sim_state(&mut app.world, &checkpoint);
+    assert_eq!(*app.world.resource::<BeliefRegistry>(), staged);
+
+    let blob = encode_save(&app.world).expect("the world encodes");
+    let (_, payload) = decode_save(&blob).expect("the save decodes");
+    assert_eq!(payload.sim.belief.sources(fx.away), staged.sources(fx.away));
+    assert_eq!(
+        payload.sim.belief.sources(fx.away).gatherings,
+        STAGED_GATHERINGS
+    );
 }

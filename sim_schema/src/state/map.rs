@@ -529,6 +529,20 @@ pub struct TileState {
     /// belief has ever accrued. Read from `core_sim`'s `BeliefRegistry`.
     #[serde(default)]
     pub belief: f32,
+    /// The part of `belief` from people who died here (dead-equivalents).
+    #[serde(default)]
+    pub belief_from_deaths: f32,
+    /// The part of `belief` from gatherings held here.
+    #[serde(default)]
+    pub belief_from_gatherings: f32,
+    /// The part of `belief` from a held monument's per-turn credit.
+    #[serde(default)]
+    pub belief_from_monument: f32,
+    /// **Is this sacred ground.** `culture.anchor_weight(belief)` when `belief` reaches
+    /// `culture.min_anchor_belief`, else `0` — the client's gate and strength-bar value. Derived at
+    /// capture from live config.
+    #[serde(default)]
+    pub belief_weight: f32,
 }
 
 impl TileState {
@@ -570,6 +584,10 @@ impl TileState {
             && same_to_hundredths_f32(self.graze_capacity, other.graze_capacity)
             && same_to_hundredths_f32(self.forage_capacity, other.forage_capacity)
             && same_to_hundredths_f32(self.belief, other.belief)
+            && same_to_hundredths_f32(self.belief_from_deaths, other.belief_from_deaths)
+            && same_to_hundredths_f32(self.belief_from_gatherings, other.belief_from_gatherings)
+            && same_to_hundredths_f32(self.belief_from_monument, other.belief_from_monument)
+            && same_to_hundredths_f32(self.belief_weight, other.belief_weight)
     }
 }
 
@@ -599,6 +617,10 @@ mod published_state_tests {
             forage_capacity: 0.0,
             underlying_terrain: TerrainType::DeepOcean,
             belief: 0.0,
+            belief_from_deaths: 0.0,
+            belief_from_gatherings: 0.0,
+            belief_from_monument: 0.0,
+            belief_weight: 0.0,
         }
     }
 

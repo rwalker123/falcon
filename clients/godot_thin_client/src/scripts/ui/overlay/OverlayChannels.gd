@@ -58,6 +58,14 @@ const TEMPERATURE_LABEL := "Temperature"
 const TEMPERATURE_DESCRIPTION := \
 	"Colors tiles by temperature. Hatched ground kills — the contour is the survival line."
 
+## The SACRED GROUND channel's player-facing surface (issue #703), declared here for the same reason as
+## the temperature block: `MapView` reads all three back so the picker row and the stamped channel are one
+## set of strings.
+const SACRED_GROUND_KEY := "sacred_ground"
+const SACRED_GROUND_LABEL := "Sacred ground"
+const SACRED_GROUND_DESCRIPTION := \
+	"Colors tiles by how sacred the ground has become, from the dead, gatherings and monuments."
+
 const CHANNELS: Array[Dictionary] = [
 	{
 		"key": NO_OVERLAY_KEY,
@@ -129,6 +137,17 @@ const CHANNELS: Array[Dictionary] = [
 		# the row after something had already built the thing the row exists to ask for — the same
 		# trap `ready_for_improvement` records above.
 		"available": &"has_temperature_data",
+		"placement": PLACEMENT_LAST,
+	},
+	{
+		# **SACRED GROUND** (issue #703) -- client-derived from the per-tile sacred-ground strength the
+		# sim publishes (`MapView.tile_belief_weight`); no wire raster. Gated on the TILES, never the
+		# lazily built raster (the temperature row's reason).
+		"key": SACRED_GROUND_KEY,
+		"label": SACRED_GROUND_LABEL,
+		"description": SACRED_GROUND_DESCRIPTION,
+		"legend_kind": KIND_RAMP,
+		"available": &"has_sacred_ground_data",
 		"placement": PLACEMENT_LAST,
 	},
 ]
