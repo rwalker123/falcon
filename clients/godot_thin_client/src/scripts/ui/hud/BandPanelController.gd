@@ -9325,7 +9325,11 @@ func _build_tribe_zone_scroll(scroll_name: String) -> ScrollContainer:
     scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
     scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
     scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-    scroll.custom_minimum_size = Vector2(0.0, _zone_box().y)
+    # **NO MEASURED HEIGHT, ON PURPOSE.** The band zone declares its box as a minimum and corrects it on
+    # `zones_resized`, because `zone_size()` is read while the header is still settling and a minimum taller than
+    # the host pushes the scroll's bottom (and so the last rows) past the panel. This scroll simply FILLS its
+    # zone host - bounded by the panel's own layout on every dock edge - so there is no number to go stale.
+    scroll.custom_minimum_size = Vector2.ZERO
     _carry_scroll_in(scroll, scroll_name, func() -> bool: return is_instance_valid(scroll))
     _tribe_scrolls[scroll_name] = scroll
     return scroll

@@ -220,7 +220,7 @@ func _build_bands_section() -> VBoxContainer:
 
 ## One collapsed line: the fold, the band's underlined name (which drills in), the sub-line, and the crew.
 func _build_band_line(band: Dictionary) -> HBoxContainer:
-	var split := TribeRoster.crew_split(labor, band)
+	var split := TribeRoster.crew_split(labor, band, TribeRoster.works(members))
 	var line := HBoxContainer.new()
 	line.add_theme_constant_override("separation", HudTribeVocab.BAND_LINE_SEPARATION)
 	line.size_flags_horizontal = Control.SIZE_EXPAND_FILL

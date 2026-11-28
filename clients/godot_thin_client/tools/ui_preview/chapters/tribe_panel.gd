@@ -11,7 +11,7 @@ extends RefCounted
 ## **THE COMMAND LINES ARE ASSERTED THROUGH THE REAL EMITTERS** - a press on the control, the HUD signal it
 ## raises, and `Main.format_tribe_command` / `format_tribe_scout` / `format_chief_proposal` spelling it.
 
-const EXPECTED_CHECKPOINTS := 60
+const EXPECTED_CHECKPOINTS := 72
 
 const BandFx := preload("res://tools/ui_preview/fixtures_band.gd")
 const DoorQ := preload("res://tools/ui_preview/door_query.gd")
@@ -39,6 +39,16 @@ const EXPECTED_SWITCHER_COUNT := 3
 const WORKS_AT := Vector2i(44, 28)
 const STORE_AT := Vector2i(45, 30)
 const FOR_TRIBE_FORAGE_AT := Vector2i(72, 19)
+## Greyfen's hands, and what is building for the tribe: 2 builders on the levied patch's declared build and 3 on
+## the road it keeps at a `route` shared work. Five of its six builders are the tribe's.
+const GREYFEN_HANDS := 24
+const PATCH_BUILDERS := 2
+const ROAD_BUILDERS := 3
+const GREYFEN_HOME := 12
+const GREYFEN_TRIBE := 9
+const GREYFEN_IDLE := 3
+## Bands and rows for the tall left-docked page: each band gets this many extra forage rows.
+const TALL_EXTRA_ROWS := 6
 
 func _member(spec: Dictionary, in_tribe: bool, short_stretch: bool) -> Dictionary:
 	var band := BandFx.band_fixture()
@@ -85,6 +95,8 @@ func _works() -> Array:
 func _roster(short_stretch: bool = true) -> Array:
 	var pinewold := _member(PINEWOLD, true, false)
 	var greyfen := _member(GREYFEN, true, short_stretch)
+	# 24 hands: 15 on rows, 3 idle, so 6 are building (the residual `builders_of` reads).
+	greyfen["working_age"] = GREYFEN_HANDS
 	var saltmarch := _member(SALTMARCH, true, false)
 	# Greyfen carries one forage row the tribe levied, so the drilled panel shows the `for the tribe` mark.
 	(greyfen["labor_assignments"] as Array).insert(1, {"kind": "forage", "workers": 2,
@@ -150,6 +162,11 @@ func run(harness) -> void:
 	])
 	var roster := _roster()
 	h._hud.update_band_alerts(roster)
+	# What is being built, published on the SOURCES: the levied patch and the road Greyfen keeps at the tribe's work.
+	h._hud._band_labor.set_forage_patches([{"x": FOR_TRIBE_FORAGE_AT.x, "y": FOR_TRIBE_FORAGE_AT.y,
+		"builders_staffed": PATCH_BUILDERS}])
+	h._hud._band_labor.set_roads([{"tile_x": WORKS_AT.x, "tile_y": WORKS_AT.y, "has_keeper": true,
+		"keeper_band_id": GREYFEN["band_id"], "builders_staffed": ROAD_BUILDERS}])
 	var bandpanel = h._hud._bandpanel
 
 	# ---- THE SWITCHER: the faction page, the tribe and Ashfell ------------------------------------------
@@ -179,17 +196,23 @@ func run(harness) -> void:
 	await h._save("tribe_page")
 
 	# ---- the sub-line and crew bar arithmetic -----------------------------------------------------------
-	var split := TribeRoster.crew_split(h._hud._band_labor, roster[1])
-	h._assert_hud("a band line splits its crew three ways: Greyfen at home %d, for the tribe %d, idle %d"
+	var split := TribeRoster.crew_split(h._hud._band_labor, roster[1], TribeRoster.works(roster))
+	h._assert_hud("a band line splits the band's People-bar total three ways, builders included: Greyfen at home %d, for the tribe %d, idle %d"
 			% [split["home"], split["tribe"], split["idle"]],
-		int(split["tribe"]) == 4 and int(split["home"]) == 11 and int(split["tribe_rows"]) == 2)
+		int(split["tribe"]) == GREYFEN_TRIBE and int(split["home"]) == GREYFEN_HOME
+			and int(split["idle"]) == GREYFEN_IDLE and int(split["tribe_rows"]) == 2)
+	var people: Dictionary = h._hud._band_labor.people_split(roster[1])
+	h._assert_hud("…and the three sum to the band's own working + idle (%d + %d), not to the rows alone"
+			% [people["working"], people["idle"]],
+		int(split["home"]) + int(split["tribe"]) + int(split["idle"]) == int(people["working"]) + int(people["idle"])
+			and int(people["working"]) + int(people["idle"]) == GREYFEN_HANDS)
 	h._assert_hud("…and the sub-line drops zero parts (%s)" % TribePage.sub_line({"jobs": 0, "tribe_rows": 0, "idle": 2}),
 		TribePage.sub_line({"jobs": 0, "tribe_rows": 0, "idle": 2}) == "2 idle"
 			and TribePage.sub_line({"jobs": 3, "tribe_rows": 1, "idle": 0}) == "3 jobs · 1 for the tribe")
 	h._assert_hud("the crew bar's tooltip carries the same sentence",
 		_collect_meta(_panel(), HudTribeVocab.CREW_BAR_META).size() == 3
 			and String((_collect_meta(_panel(), HudTribeVocab.CREW_BAR_META)[1] as Control).tooltip_text).contains(
-				"Greyfen: 11 at home, 4 for the tribe"))
+				"Greyfen: %d at home, %d for the tribe, %d idle" % [GREYFEN_HOME, GREYFEN_TRIBE, GREYFEN_IDLE]))
 
 	# ---- one band opened ---------------------------------------------------------------------------------
 	h._assert_hud("pressing a band's fold opens its line", _press_first(_panel(), HudTribeVocab.FOLD_META))
@@ -510,6 +533,56 @@ func run(harness) -> void:
 	h._assert_hud("Approve sends `tribe_proposal 0 11 approve %s`, Not now `... defer %s`, never approve_proposal (%s)"
 			% [PROPOSAL_KEY, PROPOSAL_KEY, str(orb_lines)],
 		orb_lines == ["tribe_proposal 0 11 approve %s" % PROPOSAL_KEY, "tribe_proposal 0 11 defer %s" % PROPOSAL_KEY])
+	# ---- A TALL PAGE, DOCKED ON EACH EDGE ---------------------------------------------------------------
+	# Every member opened, each with a long list of rows: the Work zone must scroll INSIDE the panel, on a side dock
+	# as well as the bottom one. The claim is geometric - the scroll container's rect lies inside the card's and its
+	# content is taller than it - since a page that overflows renders a perfectly ordinary list.
+	var tall := _roster()
+	for member in tall:
+		if int(member["tribe_id"]) != TRIBE_ID:
+			continue
+		for i in range(TALL_EXTRA_ROWS):
+			(member["labor_assignments"] as Array).append({"kind": "forage", "workers": 1,
+				"target_x": 80 + i, "target_y": 20, "floor": 0.5, "actual_yield": 0.1,
+				"sustainable_yield": 0.1, "workers_needed": 1, "overdraws": false, "for_tribe": false,
+				"max_workers": 0, "hold_crew": 0, "reach_crew": 1, "keepers_staffed": 0,
+				"kitted_staffed": 0, "bare_staffed": 1, "useful_crew": 1})
+		bandpanel._tribe_open_folds["%d:%d" % [TRIBE_ID, int(member["band_id"])]] = true
+	h._hud.update_band_alerts(tall)
+	for edge in [SIDE_LEFT, SIDE_RIGHT, SIDE_BOTTOM]:
+		panel.set_dock(edge)
+		panel.set_active_tab(BandCityPanel.ZONE_WORK)
+		bandpanel.render_tribe(TRIBE_ID)
+		await h._settle()
+		await h._settle()
+		var work_scroll := panel.find_child(HudTribeVocab.WORK_SCROLL_NAME, true, false) as ScrollContainer
+		var card_rect := panel.card_rect()
+		var scroll_rect := work_scroll.get_global_rect() if work_scroll != null else Rect2()
+		var content_height := (work_scroll.get_child(0) as Control).get_combined_minimum_size().y \
+			if work_scroll != null and work_scroll.get_child_count() > 0 else 0.0
+		h._assert_hud("dock %d: the Work zone's content sits in a vertical scroll (%s)" % [edge, str(work_scroll != null)],
+			work_scroll != null and work_scroll.vertical_scroll_mode != ScrollContainer.SCROLL_MODE_DISABLED)
+		h._assert_hud("dock %d: the scroll lies inside the panel's card (scroll %s, card %s)"
+				% [edge, str(scroll_rect), str(card_rect)],
+			work_scroll != null and scroll_rect.position.y >= card_rect.position.y - 1.0
+				and scroll_rect.end.y <= card_rect.end.y + 1.0)
+		var zone_host := work_scroll.get_parent().get_parent() as Control if work_scroll != null else null
+		h._assert_hud("dock %d: the scroll declares no height of its own and lies inside its zone host (min %.0f, scroll %s, host %s)"
+				% [edge, work_scroll.custom_minimum_size.y if work_scroll != null else -1.0, str(scroll_rect),
+					str(zone_host.get_global_rect()) if zone_host != null else "none"],
+			work_scroll != null and zone_host != null and is_zero_approx(work_scroll.custom_minimum_size.y)
+				and scroll_rect.end.y <= zone_host.get_global_rect().end.y + 1.0)
+		h._assert_hud("dock %d: the opened bands are taller than the scroll, so it scrolls (%.0f > %.0f)"
+				% [edge, content_height, scroll_rect.size.y],
+			work_scroll != null and content_height > scroll_rect.size.y)
+		if edge != SIDE_BOTTOM:
+			await h._save("tribe_page_tall_dock_%s" % ("left" if edge == SIDE_LEFT else "right"))
+	bandpanel._tribe_open_folds.clear()
+	panel.set_dock(SIDE_BOTTOM)
+	h._hud.update_band_alerts(roster)
+	h._hud._band_labor.set_forage_patches([])
+	h._hud._band_labor.set_roads([])
+
 	# Clean up so nothing downstream inherits the tribe or the panel.
 	h._hud.set_band_city_panel(null)
 	h._hud.set_reserved_inset(BAND_PANEL_RESERVER, SIDE_BOTTOM, 0.0)

@@ -42,9 +42,16 @@ stretch (`Greyfen's stretch sees +1 of +2 tiles`), members with `scouting_stretc
 four-way option picker. No morale, growth or other per-band vital. The Work zone: a Bands section, then Shared works.
 
 - A band line: a `DisclosureTriangle` fold, the underlined name (drills in), `N jobs · N for the tribe · N idle` (zero
-  parts dropped; standing roles are not jobs), and the crew number over a three-way bar (at home / for the tribe / idle).
-  The number is the three parts summed; the bar's tooltip carries the same sentence. Fold state is
+  parts dropped; standing roles are not jobs; "for the tribe" is a ROW count), and the crew number over a three-way bar
+  (at home / for the tribe / idle). The number is the band's own People-bar total (`people_split`: working + idle), so
+  builders and the bench are in it. *For the tribe* = workers on `for_tribe` rows + the builders on those rows' declared
+  builds (read off the source by the board's own keys, once per source) + this band's builders on a road at a `route`
+  shared work, capped at `builders_of`; *at home* is working less that; *idle* the split's. The bar's tooltip carries the
+  same sentence. Fold state is
   `_tribe_open_folds["<tribe_id>:<band_id>"]`.
+- **Both zones' scrolls fill their zone host and declare no height** (`_build_tribe_zone_scroll`): a measured minimum
+  goes stale while the header settles and pushes the list's bottom past the panel. Asserted on the left, right and bottom
+  docks with every member opened.
 - An opened line is `_build_tribe_band_rows(band)`: the Work zone's own producers (`_work_section_items`) and row
   builders, so a row cannot differ from the band's own page. Rows open the source's sheet as they do there; the work
   inspector is not mounted on the tribe page.

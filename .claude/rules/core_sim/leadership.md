@@ -423,7 +423,7 @@ messengers' checks; the supply bins are sized by it too.
 **Wire** (appended last): `LaborAssignment.forTribe` / `scoutingStretch`; `PopulationCohortState.tribeLevyCeiling`
 (`sim_schema::TRIBE_LEVY_*`: 0 not in a tribe, 1 none, 2 low, 3 normal, 4 high), `tribeScoutingRange` and
 `tribeWorks:[TribeWorkState { x, y, branch, targetRung (empty = keep), priority, bands (BandIds carrying a
-levy row for it, nearest first), workers (heads on those rows, restated in the Snapshot stage by `tribe_levy::refresh_all_levy_workers` after the last restaff that can touch a levy row, so the frame's `tribeWorks[].workers` equals its levy rows' workers) }]`, published to every own member band of a
+levy row for it, nearest first), workers (heads on those carriers' levy rows **plus the builders on the build each carrier declared for that (tile, branch)**, so an approved work being raised never reads 0; a road work has no row, so its heads are the build's builders alone. Restated in the Snapshot stage by `tribe_levy::refresh_all_levy_workers` after the last restaff that can touch a levy row or a build crew, so the frame's `tribeWorks[].workers` equals what the band rows show) }]`, published to every own member band of a
 formed tribe (the `tribeName` rule); a foreign row and a non-member carry the defaults.
 
 **The tribe on screen** (#863, appended after `tribeSettlementStage`, published by the same rule as `tribeName`):

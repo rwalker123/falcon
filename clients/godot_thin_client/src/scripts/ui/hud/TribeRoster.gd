@@ -111,25 +111,93 @@ static func works(member_list: Array) -> Array:
 	var raw: Variant = (member_list[0] as Dictionary).get(HudTribeVocab.KEY_WORKS, [])
 	return raw if raw is Array else []
 
-## A band's hands split three ways for the tribe page's crew bar: `{home, tribe, idle}` and the
-## row counts `{jobs, tribe_rows}`. Standing roles (scout, warrior) are not jobs.
-static func crew_split(labor: HudBandLaborState, band: Dictionary) -> Dictionary:
-	var home := 0
-	var tribe := 0
+## A band's hands split three ways for the tribe page's crew bar: `{home, tribe, idle}` plus the row counts
+## `{jobs, tribe_rows}`. **THE TOTAL IS THE BAND'S OWN PEOPLE SPLIT** (`people_split`: working + idle - the same split
+## its People bar draws), so builders, the bench and every hand not on a labor row are in it.
+##
+## `tribe` is the workers on `for_tribe` rows PLUS the builders on those rows' declared builds, plus the builders on
+## this band's own road builds at a `route` entry of the tribe's shared works. A site's build crew is published on
+## the SOURCE (`builders_staffed`), keyed the way the work board reads it - the patch by tile, the herd by id, the
+## working by tile and material, the tile improvement by tile and branch, the band improvement by branch, the road by
+## tile - and one source is counted once. A site crew can mix bands, so the builders are capped at this band's own
+## (`builders_of`). `home` is the working hands less those; `idle` the split's. Standing roles are not jobs.
+static func crew_split(labor: HudBandLaborState, band: Dictionary, works: Array = []) -> Dictionary:
+	var split := labor.people_split(band)
+	var working := int(split["working"])
+	var idle := int(split["idle"])
+	var tribe_workers := 0
 	var jobs := 0
 	var tribe_rows := 0
+	var builders_by_source: Dictionary = {}
 	for row_variant in HudBandLaborState.labor_assignments_of(band):
 		if not (row_variant is Dictionary):
 			continue
 		var row: Dictionary = row_variant
-		var workers := HudBandLaborState.staffed_total(row)
 		var kind := String(row.get(HudTribeVocab.ROW_KIND, "")).to_lower()
 		if bool(row.get(HudTribeVocab.ROW_FOR_TRIBE, false)):
-			tribe += workers
+			tribe_workers += HudBandLaborState.staffed_total(row)
 			tribe_rows += 1
+			_note_row_builders(labor, band, row, kind, builders_by_source)
 			continue
-		home += workers
 		if kind != HudConst.LABOR_KIND_SCOUT and kind != HudConst.LABOR_KIND_WARRIOR:
 			jobs += 1
-	return {"home": home, "tribe": tribe, "idle": labor.people_idle(band),
-		"jobs": jobs, "tribe_rows": tribe_rows}
+	var band_id := int(band.get("band_id", HudConst.NO_BAND_ID))
+	for work_variant in works:
+		if not (work_variant is Dictionary) \
+				or String((work_variant as Dictionary).get(HudTribeVocab.WORK_BRANCH, "")) != HudTribeVocab.ROAD_BRANCH:
+			continue
+		var road := _road_at(labor, int((work_variant as Dictionary).get(HudTribeVocab.WORK_X, -1)),
+			int((work_variant as Dictionary).get(HudTribeVocab.WORK_Y, -1)))
+		if not road.is_empty() and HudRouteVocab.has_keeper(road) \
+				and HudRouteVocab.keeper_band_id_of(road) == band_id:
+			builders_by_source[_road_key(road)] = SourceForecast.build_crew_staffed(
+				road, SourceForecast.BARE_SOURCE_PREFIX)
+	var builders := 0
+	for key in builders_by_source:
+		builders += int(builders_by_source[key])
+	builders = mini(builders, labor.builders_of(band))
+	var tribe := mini(tribe_workers + builders, working)
+	return {"home": working - tribe, "tribe": tribe, "idle": idle, "jobs": jobs, "tribe_rows": tribe_rows}
+
+## Record the builders on the source a `for_tribe` row's declared build is on, once per source.
+static func _note_row_builders(labor: HudBandLaborState, band: Dictionary, row: Dictionary, kind: String,
+		out: Dictionary) -> void:
+	var x := int(row.get("target_x", -1))
+	var y := int(row.get("target_y", -1))
+	var source: Dictionary = {}
+	var key := ""
+	match kind:
+		SourceForecast.LABOR_KIND_FORAGE:
+			source = labor.forage_patch_lookup().get(Vector2i(x, y), {})
+			key = "forage:%d,%d" % [x, y]
+		SourceForecast.LABOR_KIND_HUNT:
+			var herd_id := String(row.get("fauna_id", ""))
+			source = labor.find_world_herd(herd_id)
+			key = "hunt:%s" % herd_id
+		HudConst.LABOR_KIND_EXTRACT:
+			var material := String(row.get("material", ""))
+			source = labor.find_deposit(x, y, material)
+			key = "extract:%d,%d:%s" % [x, y, material]
+		HudConst.LABOR_KIND_TILE:
+			var branch := String(row.get("branch", ""))
+			source = labor.tile_improvement_at(x, y, branch)
+			key = "tile:%d,%d:%s" % [x, y, branch]
+		HudConst.LABOR_KIND_BAND:
+			var band_branch := String(row.get("branch", ""))
+			out["band:%s" % band_branch] = HudStorageVocab.band_builders_staffed(band, band_branch)
+			return
+		HudConst.LABOR_KIND_ROADWORK:
+			source = _road_at(labor, x, y)
+			key = _road_key(source) if not source.is_empty() else ""
+	if key != "" and not source.is_empty():
+		out[key] = SourceForecast.build_crew_staffed(source, SourceForecast.BARE_SOURCE_PREFIX)
+
+static func _road_at(labor: HudBandLaborState, x: int, y: int) -> Dictionary:
+	for road in labor.roads():
+		if road is Dictionary and int((road as Dictionary).get("tile_x", -1)) == x \
+				and int((road as Dictionary).get("tile_y", -1)) == y:
+			return road
+	return {}
+
+static func _road_key(road: Dictionary) -> String:
+	return "road:%d,%d" % [int(road.get("tile_x", -1)), int(road.get("tile_y", -1))]

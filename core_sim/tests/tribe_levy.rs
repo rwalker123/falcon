@@ -340,6 +340,61 @@ fn the_published_work_workers_follow_the_levy_rows_after_the_last_restaff() {
     assert_eq!(published(&mut app), RESTAFFED);
 }
 
+/// A tile work with a declared build states the builders on that build beside its levy row's heads, as a
+/// road work already does: three builders raising it publish `workers >= 3`, not 0.
+#[test]
+fn a_declared_tile_builds_builders_are_counted_in_the_published_work_workers() {
+    const BUILDERS: u32 = 3;
+    let (mut app, _tribe, _one, two, _three) = tribe_of_two();
+    let target = format!("{PIT_BRANCH}:{PIT_RUNG}");
+    learn_for(&mut app, &target);
+    tribe_work(
+        &mut app.world,
+        FACTION,
+        id(1),
+        PIT_BRANCH,
+        SITE,
+        Some(&target),
+        None,
+    )
+    .unwrap();
+    let source = BuildSource::Tile {
+        tile: SITE,
+        branch: BranchId::new(PIT_BRANCH),
+    };
+    {
+        let mut allocation = app.world.get_mut::<LaborAllocation>(two).unwrap();
+        for row in allocation
+            .assignments
+            .iter_mut()
+            .filter(|row| row.for_tribe.is_some())
+        {
+            row.workers = 0;
+        }
+        allocation.apply_build_crews(vec![(
+            source,
+            BuildCrew {
+                kitted: BUILDERS,
+                bare: 0,
+                cap: BUILDERS,
+                fed_first: false,
+            },
+        )]);
+    }
+    app.world
+        .run_system_once(core_sim::tribe_levy::refresh_all_levy_workers);
+    let published = with_row(&mut app, 2, |row| {
+        row.tribeWorks()
+            .expect("the works ride the row")
+            .get(0)
+            .workers()
+    });
+    assert!(
+        published >= BUILDERS,
+        "the builders on the declared build are on the work: {published}"
+    );
+}
+
 /// A work with no rung is taken where the band's own `assign_labor ... tile` would be: refused on
 /// another people's improvement with the same sentence, and an empty site is placed at the root.
 #[test]

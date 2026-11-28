@@ -656,8 +656,18 @@ pub fn refresh_levy_workers(world: &mut World, id: TribeId) {
                 (Some(source), Some(allocation)) => {
                     allocation.build_crew(source).map_or(0, |crew| crew.total())
                 }
+                // A tile work's heads are its levy row's plus the builders on the build the carrier
+                // declared for it (a work with no rung declares none).
                 (None, Some(allocation)) => {
-                    levy_row_of(allocation, work.tile, work.branch).map_or(0, |row| row.workers)
+                    let row = levy_row_of(allocation, work.tile, work.branch)
+                        .map_or(0, |row| row.workers);
+                    let builders = allocation
+                        .build_crew(&BuildSource::Tile {
+                            tile: work.tile,
+                            branch: work.branch,
+                        })
+                        .map_or(0, |crew| crew.total());
+                    row + builders
                 }
                 (_, None) => 0,
             };
