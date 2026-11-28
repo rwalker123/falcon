@@ -1317,6 +1317,7 @@ fn create_bench_orders<'a>(
                     benchTool: Some(bench_tool),
                     drawnInputs: Some(drawn_inputs),
                     lentToHunt: order.lent_to_hunt,
+                    forTribe: order.for_tribe,
                 },
             )
         })
@@ -1465,6 +1466,7 @@ fn create_craft_suggestions<'a>(
                             missingUnits: source.missing_units,
                             workersWithout: source.workers_without,
                             workPerTurn: source.work_per_turn,
+                            forTribe: source.for_tribe,
                         },
                     )
                 })
@@ -1490,6 +1492,7 @@ fn create_craft_suggestions<'a>(
                     reason: Some(reason),
                     benchTurnsSaved: suggestion.bench_turns_saved,
                     benchBuildTurns: suggestion.bench_build_turns,
+                    forTribeCount: suggestion.for_tribe_count,
                 },
             )
         })
@@ -1794,6 +1797,7 @@ fn decode_bench(bench: fb::BenchState<'_>) -> Result<BenchState, DecodeError> {
                             bench_tool: text(order.benchTool()),
                             drawn_inputs: decode_drawn_inputs(order.drawnInputs()),
                             lent_to_hunt: order.lentToHunt(),
+                            for_tribe: order.forTribe(),
                         })
                     })
                     .collect::<Result<Vec<_>, DecodeError>>()
@@ -2109,6 +2113,7 @@ fn decode_population(
                     missing_units: source.missingUnits(),
                     workers_without: source.workersWithout(),
                     work_per_turn: source.workPerTurn(),
+                    for_tribe: source.forTribe(),
                 }),
                 shortfalls: decode_shortfalls(suggestion.shortfalls()),
                 upcoming_count: suggestion.upcomingCount(),
@@ -2118,6 +2123,7 @@ fn decode_population(
                 reason: text(suggestion.reason()),
                 bench_turns_saved: suggestion.benchTurnsSaved(),
                 bench_build_turns: suggestion.benchBuildTurns(),
+                for_tribe_count: suggestion.forTribeCount(),
             }
         }),
         fertility_ceiling: cohort.fertilityCeiling(),

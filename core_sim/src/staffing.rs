@@ -579,7 +579,7 @@ pub struct LevyPlan {
 impl LevyPlan {
     /// Whether a declared build is the tribe's road build.
     pub fn levies_road_build(&self, source: &BuildSource) -> bool {
-        matches!(source, BuildSource::Road(tile) if self.road_tiles.contains(tile))
+        crate::tribe_levy::road_build_is_levied(&self.road_tiles, source)
     }
 }
 

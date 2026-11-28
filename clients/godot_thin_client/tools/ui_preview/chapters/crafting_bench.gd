@@ -772,6 +772,7 @@ func _crafting_states() -> void:
 	await _auto_craft_states()
 	await _kit_order_states()
 	await _storage_states()
+	await _for_tribe_states()
 
 	# Hand everything back: the panel closed, the roster restored to the reference band.
 	h._hud.close_crafting_panel()
@@ -848,6 +849,73 @@ func _coming_up_state() -> void:
 		h._assert_hud("crafting/coming-up — the coming-up row hovers the lead time (%s)" % [rows[1].tooltip_text],
 			rows[1].tooltip_text.contains("about %d turns" % COMING_UP_LEAD_TURNS))
 	await h._save("crafting_coming_up")
+
+# ---- "for the tribe" marks and the tribe view (#864) ---------------------------------------------
+## Clubs: the WHOLE count is the tribe's; spears: a part; the head order: its remaining items.
+const TRIBE_SPEARS_PART := 1
+const TRIBE_SECOND_BAND_NAME := "Hollowmere"
+const TRIBE_SECOND_BAND_NEEDED := 2
+const TRIBE_VIEW_PADDING := 24
+const TRIBE_VIEW_MIN_WIDTH := 360.0
+## Open ground clear of the docks, so the frame is judged on its own.
+const TRIBE_VIEW_POSITION := Vector2(500.0, 200.0)
+
+func _for_tribe_states() -> void:
+	var band := _queued_band()
+	var suggestions: Array = band["craft_suggestions"]
+	(suggestions[0] as Dictionary)["for_tribe_count"] = SUGGEST_CLUBS_COUNT
+	(suggestions[1] as Dictionary)["for_tribe_count"] = TRIBE_SPEARS_PART
+	var orders: Array = (band["bench"] as Dictionary)["orders"]
+	(orders[0] as Dictionary)["for_tribe"] = QUEUE_HEAD_COUNT - QUEUE_HEAD_MADE
+	(orders[1] as Dictionary)["for_tribe"] = 1
+	h._hud.update_band_alerts([band])
+	h._hud.open_crafting_panel(band)
+	await h._settle()
+	var panel: CraftingPanel = h._hud.crafting_panel().panel()
+	if panel == null:
+		h._assert_hud("crafting/tribe — the panel is open", false)
+		return
+	var texts: Array = _label_texts(panel)
+	h._assert_hud("crafting/tribe — a whole-count suggestion says 'for the tribe' (%s)" % [texts],
+		texts.has(" — for the tribe"))
+	h._assert_hud("crafting/tribe — a part says 'n for the tribe'", texts.has(" — 1 for the tribe"))
+	await h._save("crafting_for_tribe")
+	h._hud.close_crafting_panel()
+	await h._settle()
+
+	var other := _crafting_band()
+	other["name"] = TRIBE_SECOND_BAND_NAME
+	var needed := _suggestion("crook", TRIBE_SECOND_BAND_NEEDED, 1.0, 0.0, [])
+	needed["for_tribe_count"] = TRIBE_SECOND_BAND_NEEDED
+	needed["display_name"] = "Crooks"
+	other["craft_suggestions"] = [needed]
+	var members: Array[Dictionary] = [band, other]
+	var view: Control = load("res://src/scripts/ui/CraftingTribeView.gd").build(members)
+	var frame := PanelContainer.new()
+	frame.custom_minimum_size = Vector2(TRIBE_VIEW_MIN_WIDTH, 0.0)
+	var pad := MarginContainer.new()
+	for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+		pad.add_theme_constant_override(side, TRIBE_VIEW_PADDING)
+	pad.add_child(view)
+	frame.add_child(pad)
+	h._hud.add_child(frame)
+	frame.position = TRIBE_VIEW_POSITION
+	await h._settle()
+	var view_texts: Array = _label_texts(view)
+	h._assert_hud("crafting/tribe-view — a queued order reads 'making' (%s)" % [view_texts],
+		view_texts.any(func(t: String) -> bool: return t.ends_with("— making")))
+	h._assert_hud("crafting/tribe-view — an unqueued need reads 'needed'",
+		view_texts.has("Crooks ×%d — needed" % TRIBE_SECOND_BAND_NEEDED))
+	await h._save("crafting_tribe_view")
+	var nothing_band := _crafting_band()
+	nothing_band["bench"] = _idle_bench()
+	var none_members: Array[Dictionary] = [nothing_band]
+	var none_view: Control = load("res://src/scripts/ui/CraftingTribeView.gd").build(none_members)
+	h._assert_hud("crafting/tribe-view — nobody making anything says so",
+		_label_texts(none_view).has("No band is making anything for the tribe."))
+	none_view.free()
+	frame.queue_free()
+	await h._settle()
 
 ## The spears suggestion's hover, one line per source.
 const SUGGEST_SPEARS_TOOLTIP := "Hunters on Red Deer: 2 missing, 2 without\nHunters on Aurochs: 1 missing, 1 without"

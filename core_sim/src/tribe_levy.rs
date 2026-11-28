@@ -28,7 +28,7 @@ use crate::{
     leadership_config::LeadershipConfig,
     orders::FactionId,
     staffing::{restaff_band, LevyPlan},
-    tribe::{LevyCarrier, LevyCeiling, TribeId, TribeRegistry, TribeWork},
+    tribe::{LevyCarrier, LevyCeiling, Tribe, TribeId, TribeRegistry, TribeWork},
 };
 
 /// The levy plan a tribe member's staffing is dealt under: the ceiling's share and the share of the
@@ -46,13 +46,40 @@ pub fn levy_plan(
         share: tribe.levy.share(config),
         factor: tribe_orders_carried_out_for_member(config, &reach, member_has_own_leader),
         fixed_budget: None,
-        road_tiles: tribe
-            .works
-            .iter()
-            .filter(|work| is_road_branch(ladder, work.branch))
-            .map(|work| work.tile)
-            .collect(),
+        road_tiles: tribe_road_tiles(tribe, ladder),
     })
+}
+
+/// **THE TILES OF A TRIBE'S ROAD WORKS** (derived from `Tribe::works`, nothing extra saved). The one
+/// reading under both the staffing plan ([`LevyPlan::road_tiles`]) and the capture's craft
+/// suggestions ([`band_levied_road_tiles`]).
+pub fn tribe_road_tiles(tribe: &Tribe, ladder: &LadderConfig) -> Vec<UVec2> {
+    tribe
+        .works
+        .iter()
+        .filter(|work| is_road_branch(ladder, work.branch))
+        .map(|work| work.tile)
+        .collect()
+}
+
+/// **THE ROAD TILES WHOSE BUILDS ARE THIS BAND'S LEVY**: its tribe's road works, empty for a band in
+/// no tribe. A road has no labor row to carry `for_tribe`, so a `Road` build on one of these is the
+/// tribe's.
+pub fn band_levied_road_tiles(
+    registry: &TribeRegistry,
+    ladder: &LadderConfig,
+    band: BandId,
+) -> Vec<UVec2> {
+    registry
+        .tribe_of(band)
+        .map(|tribe| tribe_road_tiles(tribe, ladder))
+        .unwrap_or_default()
+}
+
+/// **WHETHER A DECLARED BUILD IS THE TRIBE'S ROAD BUILD** - the one test [`LevyPlan::levies_road_build`]
+/// and the craft suggestions' `for_tribe` marking both ask.
+pub fn road_build_is_levied(road_tiles: &[UVec2], source: &BuildSource) -> bool {
+    matches!(source, BuildSource::Road(tile) if road_tiles.contains(tile))
 }
 
 /// Whether a branch is a road branch: its works are one road tile each, built by the carrier band

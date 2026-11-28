@@ -579,6 +579,38 @@ const SUGGESTION_SHORTFALL_TAIL_FORMAT := "%s for all %d"
 ## be a permanent row spent on good news.
 const SUGGESTIONS_HEAD := "Make next"
 const SUGGESTION_TITLE_FORMAT := "%s ×%d"
+
+# ---- "for the tribe" marks (#864) ------------------------------------------------------------------
+## The sim publishes how many of a suggestion's `count` (and of an order's remaining items) the tribe's
+## levy rows are owed; the panel only words it. `0` says nothing.
+const SUGGESTION_FOR_TRIBE_COUNT_KEY := "for_tribe_count"
+const SUGGESTION_SOURCE_FOR_TRIBE_KEY := "for_tribe"
+const ORDER_FOR_TRIBE_KEY := "for_tribe"
+const FOR_TRIBE_ALL_MARK := " — for the tribe"
+const FOR_TRIBE_PART_MARK_FORMAT := " — %d for the tribe"
+const FOR_TRIBE_META := "crafting_for_tribe_mark"
+const FOR_TRIBE_MARK_FONT_SIZE := 11
+const FOR_TRIBE_MARK_SEPARATION := 0
+
+## The mark for `n` of `total` items: whole, part, or nothing.
+static func for_tribe_mark(n: int, total: int) -> String:
+	if n <= 0:
+		return ""
+	if n >= total:
+		return FOR_TRIBE_ALL_MARK
+	return FOR_TRIBE_PART_MARK_FORMAT % n
+
+# ---- the tribe view (CraftingTribeView.gd) -----------------------------------------------------------
+const BAND_NAME_KEY := "name"
+const TRIBE_VIEW_MAKING_FORMAT := "%s ×%d — making"
+const TRIBE_VIEW_NEEDED_FORMAT := "%s ×%d — needed"
+const TRIBE_VIEW_NOTHING_FORMAT := "%s — nothing for the tribe"
+const TRIBE_VIEW_NOBODY := "No band is making anything for the tribe."
+const TRIBE_VIEW_SEPARATION := 6
+const TRIBE_VIEW_LINE_SEPARATION := 0
+const TRIBE_VIEW_NAME_FONT_SIZE := 13
+const TRIBE_VIEW_LINE_FONT_SIZE := 12
+const TRIBE_VIEW_ITEM_INDENT := 10
 ## The consequence, in the shortage's own unit: work a turn on gear that adds build or keeping work…
 const SUGGESTION_WORK_FORMAT := "+%s work a turn"
 ## …else the people going without — `3 hunters without`, the job's crew noun where every source shares

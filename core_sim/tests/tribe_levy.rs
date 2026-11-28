@@ -1087,3 +1087,66 @@ fn a_road_work_is_refused_with_the_gates_own_sentence_without_the_knowledge() {
     );
     assert!(registry(&app).get(tribe).unwrap().works.is_empty());
 }
+
+/// A road kit item and the units its builders lack on the carrier's road build.
+const ROAD_KIT_ITEM: &str = "earthmoving";
+const ROAD_KIT_SHORT: f32 = 2.0;
+
+/// State the settled tool line a road build's builders left short.
+fn road_builders_short(app: &mut App, entity: Entity) {
+    app.world
+        .get_mut::<LaborAllocation>(entity)
+        .unwrap()
+        .last_build_toe = vec![core_sim::BuildToeLine {
+        source: BuildSource::Road(ROAD),
+        item: ROAD_KIT_ITEM.to_string(),
+        required: ROAD_KIT_SHORT,
+        filled: 0.0,
+    }];
+}
+
+/// `(count, forTribeCount, [source forTribe])` of the road kit item on band `n`'s published suggestions.
+fn road_kit_suggestion(app: &mut App, n: u64) -> Option<(u32, u32, Vec<bool>)> {
+    with_row(app, n, |row| {
+        row.craftSuggestions().and_then(|rows| {
+            rows.iter()
+                .find(|suggestion| suggestion.itemId() == Some(ROAD_KIT_ITEM))
+                .map(|suggestion| {
+                    (
+                        suggestion.count(),
+                        suggestion.forTribeCount(),
+                        suggestion
+                            .sources()
+                            .map(|sources| sources.iter().map(|source| source.forTribe()).collect())
+                            .unwrap_or_default(),
+                    )
+                })
+        })
+    })
+}
+
+/// **A TRIBE ROAD'S BUILDERS' SHORT KIT IS FOR THE TRIBE** (#864): the carrier's road build has no labor
+/// row to say so, so the capture asks the tribe registry through the same helper the staffing plan uses.
+/// A band in no tribe with the identical line reads nothing for the tribe.
+#[test]
+fn a_tribe_roads_short_builders_kit_is_marked_for_the_tribe() {
+    let (mut app, _tribe, _one, two, three) = tribe_of_two();
+    learn_for(&mut app, GRADE_TARGET);
+    seat_trail(&mut app, None);
+    road_work(&mut app, Some(GRADE_TARGET)).unwrap();
+    assert_eq!(road_build(&app, two), Some(BuildJob::Climb(dirt_road())));
+    road_builders_short(&mut app, two);
+    let (count, for_tribe, sources) =
+        road_kit_suggestion(&mut app, 2).expect("the road kit is suggested");
+    assert_eq!(count, ROAD_KIT_SHORT as u32);
+    assert_eq!(for_tribe, count, "every unit is the tribe's road's");
+    assert_eq!(sources, vec![true]);
+
+    // Control: the same line on a band in no tribe is that band's own.
+    road_builders_short(&mut app, three);
+    let (count, for_tribe, sources) =
+        road_kit_suggestion(&mut app, 3).expect("the control band is short too");
+    assert_eq!(count, ROAD_KIT_SHORT as u32);
+    assert_eq!(for_tribe, 0);
+    assert_eq!(sources, vec![false]);
+}

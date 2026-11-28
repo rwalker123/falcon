@@ -2992,7 +2992,16 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 	title.text = HudCraftingVocab.SUGGESTION_TITLE_FORMAT % [_suggestion_item_name(item_id, ledger_row), count]
 	title.add_theme_font_size_override("font_size", HudCraftingVocab.SUGGESTION_NAME_FONT_SIZE)
 	title.add_theme_color_override("font_color", HudStyle.INK)
-	words.add_child(title)
+	var tribe_mark := HudCraftingVocab.for_tribe_mark(
+		int(suggestion.get(HudCraftingVocab.SUGGESTION_FOR_TRIBE_COUNT_KEY, 0)), count)
+	if tribe_mark == "":
+		words.add_child(title)
+	else:
+		var title_line := HBoxContainer.new()
+		title_line.add_theme_constant_override("separation", HudCraftingVocab.FOR_TRIBE_MARK_SEPARATION)
+		title_line.add_child(title)
+		title_line.add_child(_for_tribe_label(tribe_mark))
+		words.add_child(title_line)
 	var consequence := Label.new()
 	consequence.add_theme_font_size_override("font_size", HudCraftingVocab.SUGGESTION_LINE_FONT_SIZE)
 	if coming_up_only:
@@ -3055,6 +3064,15 @@ func _build_suggestion_row(suggestion: Dictionary, payload: Dictionary) -> Contr
 			action.add_child(why)
 	row.add_child(_column_cell(action, HudCraftingVocab.SUGGESTION_ACTION_WIDTH, false))
 	return row
+
+## The muted "— for the tribe" tail on an item's own line.
+func _for_tribe_label(mark: String) -> Label:
+	var label := Label.new()
+	label.text = mark
+	label.add_theme_font_size_override("font_size", HudCraftingVocab.FOR_TRIBE_MARK_FONT_SIZE)
+	label.add_theme_color_override("font_color", HudStyle.INK_DIM)
+	label.set_meta(HudCraftingVocab.FOR_TRIBE_META, true)
+	return label
 
 ## A coming-up-only entry: the wear forecast alone put it here - no consumer is short today.
 func _is_coming_up_only(suggestion: Dictionary) -> bool:
@@ -3333,6 +3351,10 @@ func _build_order_row(index: int, order: Dictionary, bench: Dictionary, payload:
 	name_label.add_theme_color_override("font_color", HudStyle.INK)
 	name_label.set_meta(HudCraftingVocab.ORDER_NAME_META, index)
 	name_row.add_child(name_label)
+	var order_tribe_mark := HudCraftingVocab.for_tribe_mark(
+		int(order.get(HudCraftingVocab.ORDER_FOR_TRIBE_KEY, 0)), maxi(count - made, 0))
+	if order_tribe_mark != "":
+		name_row.add_child(_for_tribe_label(order_tribe_mark))
 	if bool(order.get(HudCraftingVocab.ORDER_AUTO_KEY, false)):
 		name_row.add_child(_build_auto_tag(index))
 	row.add_child(name_row)
