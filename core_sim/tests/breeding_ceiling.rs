@@ -20,8 +20,9 @@ use bevy::prelude::{Entity, With};
 use core_sim::{
     breeding_ceiling, recapture_snapshot_in_place, scalar_from_f32, simulate_population,
     split_band_from_parent, BandId, ConnectionKey, ConnectionLedger, ConnectionsConfig,
-    DemographicsConfigHandle, FoundingLines, LaborAllocation, PopulationCohort, ResidentBand,
-    Scalar, SettleConfig, Sighting, SnapshotHistory, Tile, FULL_TIE,
+    DemographicsConfigHandle, FoundingLines, FreeBreedingPeoples, LaborAllocation,
+    PopulationCohort, ResidentBand, Scalar, SettleConfig, Sighting, SnapshotHistory, Tile,
+    FULL_TIE,
 };
 use faction_support::{one_faction_world, HOME};
 
@@ -726,4 +727,41 @@ fn scattering_a_people_never_raises_its_total_ceiling() {
         "{} scattered bands publish {total_ceiling} against the people's {people_ceiling}",
         bands.len()
     );
+}
+
+/// **`BreedingReading::capped` says whether the ceiling cut this turn's births** — which a
+/// head-count cannot, because births fill the headroom and deaths then pull the count under it.
+#[test]
+fn the_reading_says_capped_only_when_the_ceiling_cut_the_births() {
+    let mut app = one_faction_world();
+    let (band, id) = home_band(&mut app);
+    let (lines, _) = shipped_lineage(&app);
+    let ceiling = ceiling_for(&app, usize::from(lines));
+    seat_lines(&mut app, band, id, lines);
+    neutral_trend(&mut app, band);
+
+    // Well under the ceiling: every would-be birth fits.
+    seat_people(&mut app, band, ceiling as f32 / 2.0);
+    turn(&mut app, &[band]);
+    assert!(
+        cohort(&app, band).last_fertility_factors.multiplier() > Scalar::zero(),
+        "liveness: the fed band was breeding"
+    );
+    assert!(!cohort(&app, band).last_breeding.capped);
+
+    // Just under it: this turn's births outrun the room, so the ceiling cuts them.
+    seat_people(&mut app, band, ceiling as f32 - SEAT_JUST_UNDER_CEILING);
+    turn(&mut app, &[band]);
+    assert!(cohort(&app, band).last_breeding.capped);
+
+    // Above it: factor 0, still capped.
+    seat_people(&mut app, band, ceiling as f32 + SEAT_JUST_UNDER_CEILING);
+    turn(&mut app, &[band]);
+    assert!(cohort(&app, band).last_breeding.capped);
+
+    // The same band once its people is latched free: nothing is cut.
+    app.world.resource_mut::<FreeBreedingPeoples>().latch(HOME);
+    seat_people(&mut app, band, ceiling as f32 - SEAT_JUST_UNDER_CEILING);
+    turn(&mut app, &[band]);
+    assert!(!cohort(&app, band).last_breeding.capped);
 }

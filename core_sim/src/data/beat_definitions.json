@@ -79,6 +79,38 @@
     "opening": true
   },
   {
+    "id": "guidance.growth_needs_other_peoples",
+    "tier": "ambient",
+    "soul": {
+      "question": "We have stopped growing. Our families are too closely tied."
+    },
+    "when": {
+      "all": [
+        {
+          "signal": "lineage.breeding_capped",
+          "crosses": "rising",
+          "threshold": 1
+        }
+      ]
+    },
+    "nouns": {},
+    "wardrobe": [
+      {
+        "id": "growth_needs_other_peoples.too_closely_tied",
+        "fit": {},
+        "voice": {
+          "mythic": "We have stopped growing. Our families are too closely tied for more children to come. Find other peoples and stay near them; while we are in touch, their families let ours grow.",
+          "warm": "We've stopped growing — we're all too closely related for more children to come. Find other peoples and stay close to them; as long as we keep in touch, their families let ours grow."
+        }
+      }
+    ],
+    "gloss": [
+      "lineage.breeding_capped",
+      "band.count"
+    ],
+    "cooldown_turns": 50
+  },
+  {
     "id": "discovery.site_found",
     "tier": "ambient",
     "soul": {

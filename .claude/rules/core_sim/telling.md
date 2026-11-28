@@ -82,6 +82,7 @@ once. Sampled for the **player faction** = `FactionRegistry`'s first entry in `F
 | `settlement.city_reached` | `1` while any of the player faction's resident bands stands in a settlement at or above the stage whose id is `city` in `settlement_stage_config.json`, else `0`. The stage is found by id in the config's ordered `stages` (never by index) and read from `SettlementStages` — the band's tribe's stage when it is in a tribe, else its own (`settlement.rs`). A level, not a diff: the `settlement.city_reached` beat (tier `beat`, `once`) gates on `crosses` rising through 1, so it tells a climb once. A config with no `city` row samples `0` |
 | `leadership.chiefs_emerged_this_turn` / `.councils_emerged_this_turn` | the number of the player faction's resident bands whose leader of that kind has `since_turn` equal to this turn's tick. Read off the leader itself, not diffed against a standing count, so a led band lost the same turn cannot mask a new leader; nothing is retained in the ledger's edge state (`leadership.md`) |
 | `leadership.bands_hungry_under_leader` / `.bands_leader_failing` / `.bands_leader_delivering` | counts of the player faction's led bands (resident, `BandLeadership::leader` set) whose people went short at this turn's meal (`PopulationCohort::last_leadership.hungry`), whose leadership morale term is negative, and whose term is positive. Levels, not diffs; the `leadership.leader_cannot_feed_us` / `leadership.leader_delivers` ambient beats gate on `crosses` rising through 1 (`leadership.md` -> "The band judges its leader by what he delivers") |
+| `lineage.breeding_capped` | count of the player faction's resident bands whose `PopulationCohort::last_breeding.capped` is true — the inbreeding ceiling cut this turn's births for the band's breeding population — and whose `last_breeding.faction` is the cohort's own faction (the stale-reading guard `breeding_shed` uses). A level, not a diff; the `guidance.growth_needs_other_peoples` ambient beat gates on `crosses` rising through 1 (`campaign.md` -> "The breeding ceiling") |
 | `discovery.progress.cultivation` / `.herding` | `DiscoveryProgressLedger::get_progress` on `CULTIVATION_DISCOVERY_ID` (2003) / `HERDING_DISCOVERY_ID` (2004), 0..1 |
 | `fauna.collapsing_group_count` | `HerdRegistry::entries()` in `EcologyPhase::Collapsing` |
 | `culture.axis.<snake_axis>` | one per `CultureTraitAxis`, off the **faction culture rollup** — `CultureManager::faction_trait_average`, a **population-weighted average of the faction's resident bands' own culture layers** (keyed `CultureOwner::from_band`, weighted by `PopulationCohort.size` over `With<ResidentBand>`; expeditions are detached and don't vote), falling back to the global layer only when no band carries a layer. **That fallback was the reading for this signal's entire history until #407**: bands owned no layers at all, so every lookup missed and the axes silently reported world-average culture — a beat authored to fire on a diverged band evaluated against the global layer instead. Bands now carry layers parented to their province; see "Bands carry their own culture" in `ecs-systems.md` |
@@ -197,8 +198,13 @@ their own.
   and says only what that verb does today. The hoe line says *faster*, never *needed*, because
   hoes are build **productivity** on the `plant` branch (`equipment.md`), and it can say "make
   hoes" at all because the `hoes` recipe carries no `requires_knowledge`. Change either and the
-  line is wrong. A hint whose mechanic is unbuilt is not authored: nothing in the sim yet ties
-  growth to contact, so no beat says it does.
+  line is wrong. A hint whose mechanic is unbuilt is not authored.
+  `guidance.growth_needs_other_peoples` names contact because the breeding ceiling (#688) ties
+  growth to it: a people in touch with another counts that people's lines. It gates on
+  `lineage.breeding_capped` rising through 1 rather than on a head-count, because births fill the
+  headroom and deaths then pull the count under the ceiling, so a head-count never reads "at the
+  ceiling". It is `ambient` with `cooldown_turns` 50 and not `once`, because the ceiling returns
+  when ties bleed out and the line is true again each time; it is not `opening`.
 - **Guidance rides the `ambient` tier, never `beat`.** A `beat`-tier line spends that tier's
   `global_cooldown_turns` (2), and a `crosses`-gated beat whose crossing turn falls inside that
   window is **lost for good** — the edge is committed whether or not the beat could fire. A beat-tier

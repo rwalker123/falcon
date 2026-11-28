@@ -1393,6 +1393,7 @@ fn publish_breeding_readings(cohorts: &mut DemographicBands, breeding: &Breeding
             ceiling: ceiling
                 .people
                 .unwrap_or(crate::lineage::NO_INBREEDING_CEILING),
+            capped: ceiling.factor < scalar_one(),
             members,
             peoples: ceiling.peoples.clone(),
         };

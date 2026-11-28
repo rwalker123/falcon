@@ -853,7 +853,10 @@ adds that people's lines while the touch lasts, and a population that reaches
   safety net.
 - **Parked for publication** on `PopulationCohort::last_breeding` (`lineage::BreedingReading`):
   the population's **post-turn** head-count (members' fixed-point totals summed, rounded once —
-  the same rounding as `size`), its effective ceiling, and the `members` / `peoples` rows below,
+  the same rounding as `size`), its effective ceiling, `capped` (the factor was below `1`: the
+  ceiling cut this turn's births; `false` when latched free, when every birth fit or when nobody
+  would be born; Telling-only, not on the wire; the `lineage.breeding_capped` signal reads it), and
+  the `members` / `peoples` rows below,
   the same on every member. Rewritten every turn; reset to the default on a fresh splinter.
 - **On the wire**, appended to `PopulationCohortState`: `fertilityCeiling:long` (fixed point,
   neutral at 1e6, in the zero-reserve not-projected sentinel with its three siblings),

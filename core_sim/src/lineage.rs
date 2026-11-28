@@ -312,6 +312,13 @@ pub struct BreedingReading {
     /// [`NO_INBREEDING_CEILING`] once the people is latched. On the wire as
     /// `PopulationCohortState.breedingCeiling`.
     pub ceiling: u32,
+    /// Whether the inbreeding ceiling cut this turn's births for the population: its ceiling factor
+    /// was below `1` (including `0` at or above the ceiling). `false` when the people is latched
+    /// free, when every would-be birth fit, or when nobody would have been born. A head-count cannot
+    /// say this (births fill the headroom, then deaths pull the count under the ceiling), so the
+    /// pre-pass states it. Publication and the Telling only (`lineage.breeding_capped`); not on the
+    /// wire, and nothing steers off it.
+    pub capped: bool,
     /// The own-people bands in the population, self included, in `BandId` order.
     pub members: Vec<BreedingMember>,
     /// The other peoples whose in-touch bands contribute lines, in faction order.
